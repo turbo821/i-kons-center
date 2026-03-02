@@ -1,21 +1,26 @@
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
+import HomePage from "./pages/HomePage";
+import AdminPage from "./pages/AdminPage";
 
 function App() {
-  const [message, setMessage] = useState("Loading...");
-
-  useEffect(() => {
-    fetch("http://127.0.0.1:5000/api/message")
-      .then((response) => response.json())
-      .then((data) => setMessage(data.message))
-      .catch((error) => {
-        console.error("Error:", error);
-        setMessage("Error connecting to backend");
-      });
-  }, []);
+  const [page, setPage] = useState("home");
 
   return (
-    <div style={{ textAlign: "center", marginTop: "50px" }}>
-      <h1>{message}</h1>
+    <div>
+      <div className="bg-gray-800 text-white p-4 flex justify-between">
+        <div className="font-bold">Инфоцентр</div>
+        <div className="space-x-4">
+          <button onClick={() => setPage("home")} className="hover:underline">
+            Главная
+          </button>
+          <button onClick={() => setPage("admin")} className="hover:underline">
+            Админ панель
+          </button>
+        </div>
+      </div>
+
+      {page === "home" && <HomePage />}
+      {page === "admin" && <AdminPage />}
     </div>
   );
 }
