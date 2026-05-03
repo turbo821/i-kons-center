@@ -1,27 +1,40 @@
-import React, { useState } from "react";
+import { BrowserRouter, Routes, Route } from "react-router-dom";
+import Layout from "./components/Layout";
+
 import HomePage from "./pages/HomePage";
-import AdminPage from "./pages/AdminPage";
+import LoginPage from "./pages/LoginPage";
+import RegisterPage from "./pages/RegisterPage";
+import DashboardPage from "./pages/DashboardPage";
+import ProtectedRoute from "./components/ProtectedRoute";
 
 function App() {
-  const [page, setPage] = useState("home");
-
   return (
-    <div>
-      <div className="bg-gray-800 text-white p-4 flex justify-between">
-        <div className="font-bold">Инфоцентр</div>
-        <div className="space-x-4">
-          <button onClick={() => setPage("home")} className="hover:underline">
-            Главная
-          </button>
-          <button onClick={() => setPage("admin")} className="hover:underline">
-            Админ панель
-          </button>
-        </div>
-      </div>
-
-      {page === "home" && <HomePage />}
-      {page === "admin" && <AdminPage />}
-    </div>
+    <BrowserRouter>
+      <Layout>
+        <Routes>
+          <Route
+            path="/"
+            element={<HomePage />}
+          />
+          <Route
+            path="/login"
+            element={<LoginPage />}
+          />
+          <Route
+            path="/register"
+            element={<RegisterPage />}
+          />
+          <Route
+            path="/dashboard"
+            element={
+              <ProtectedRoute>
+                <DashboardPage />
+              </ProtectedRoute>
+            }
+          />
+        </Routes>
+      </Layout>
+    </BrowserRouter>
   );
 }
 
