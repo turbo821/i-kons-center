@@ -9,20 +9,8 @@ function Header() {
 
   return (
     <header className="bg-gray-900 text-white shadow">
-      <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
-        <div className="text-xl font-semibold">
-          I-Kons Center
-        </div>
+      <div className="mx-auto px-6 h-16 flex items-center justify-end">
         <nav className="flex items-center gap-6 text-sm">
-          <Link className="hover:text-blue-400 transition" to="/">
-            Главная
-          </Link>
-          {user && (
-            <Link className="hover:text-blue-400 transition" to="/dashboard">
-              Дашборды
-            </Link>
-          )}
-
           {!user && (
             <>
               <Link className="hover:text-blue-400 transition" to="/login">
@@ -36,11 +24,10 @@ function Header() {
               </Link>
             </>
           )}
-
           {user && (
             <>
-              <span>
-                {user.email}
+              <span className="mt-1 bg-slate-800 rounded-xl p-2">
+                {user.username}
               </span>
               <button onClick={logout}>
                 Выйти
