@@ -31,6 +31,13 @@ pip install --upgrade pip
 pip install -r requirements.txt
 pip install --only-binary :all: psycopg2-binary
 
+# Миграции
+
+# один раз
+flask db init
+flask db migrate -m "initial schema"
+flask db upgrade
+
 # Запуск сервера
 python run.py
 ```
@@ -55,3 +62,26 @@ npm start
 ## 📁 Структура проекта
 * `backend/` — исходный код серверной части.
 * `frontend/` — исходный код клиентской части.
+
+## Команды для запуска и применения миграций
+
+```bash
+# 1. Если Postgres уже запускался ранее — снести том,
+# чтобы initdb-скрипты выполнились заново:
+docker compose down -v
+
+# 2. Поднять стек:
+docker compose up -d --build
+
+# 3. Создать первую миграцию (внутри контейнера backend):
+docker compose exec backend flask db init        # один раз
+docker compose exec backend flask db migrate -m "initial schema"
+docker compose exec backend flask db upgrade
+
+# 4. Проверить:
+docker compose exec db psql -U postgres -d infocenter -c "\dt"
+# Должно вывести: users, roles, user_roles, data_sources,
+# datasets, dataset_fields, metrics, dimensions, filters,
+# dashboards, widgets, categories, kpis, dashboard_kpis,
+# alembic_version
+```

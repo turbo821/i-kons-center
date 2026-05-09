@@ -5,7 +5,16 @@ from flask_jwt_extended import get_jwt
 
 from flask import jsonify
 
-def role_required(role_name):
+
+def role_required(*role_names):
+    """
+    Декоратор: пускает пользователя, если у него есть ХОТЯ БЫ ОДНА
+    из перечисленных ролей.
+
+    Примеры использования:
+        @role_required("admin")
+        @role_required("admin", "expert")
+    """
 
     def wrapper(fn):
 
@@ -15,10 +24,11 @@ def role_required(role_name):
             verify_jwt_in_request()
 
             claims = get_jwt()
+            user_roles = set(claims.get("roles", []))
 
-            roles = claims.get("roles", [])
+            allowed = set(role_names)
 
-            if role_name not in roles:
+            if not (user_roles & allowed):
                 return jsonify({
                     "message": "Forbidden"
                 }), 403

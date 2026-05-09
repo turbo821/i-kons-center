@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   db:
     image: postgres:15
@@ -13,6 +11,12 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./db/scripts:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d infocenter"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   backend:
     build: ./backend
@@ -21,6 +25,20 @@ services:
       - "5000:5000"
     volumes:
       - ./backend:/app
+      # Отдельный volume для загруженных CSV/Excel — не теряются при пересборке
+      - uploads_data:/app/uploads
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_NAME: infocenter
+      JWT_SECRET_KEY: change-me-in-production
+      UPLOAD_FOLDER: /app/uploads
+      FLASK_APP: run.py
+    depends_on:
+      db:
+        condition: service_healthy
 
   frontend:
     build: ./frontend
@@ -29,5 +47,12 @@ services:
       - "3000:3000"
     volumes:
       - ./frontend:/app
+      - /app/node_modules
     stdin_open: true
     tty: true
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
+  uploads_data:
