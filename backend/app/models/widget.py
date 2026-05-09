@@ -13,7 +13,7 @@ class Widget(db.Model):
     dashboard_id = db.Column(
         db.Integer,
         db.ForeignKey("dashboards.id", ondelete="CASCADE"),
-        nullable=False
+        nullable=True
     )
 
     dataset_id = db.Column(
@@ -26,7 +26,7 @@ class Widget(db.Model):
 
     type = db.Column(db.String(50), nullable=False)
 
-    # Параметры размещения на дашборде (сетка react-grid-layout)
+    # Координаты на сетке дашборда
     position_x = db.Column(db.Integer, default=0, nullable=False)
     position_y = db.Column(db.Integer, default=0, nullable=False)
     width = db.Column(db.Integer, default=4, nullable=False)
@@ -49,11 +49,24 @@ class Widget(db.Model):
         cascade="all, delete-orphan"
     )
 
-    def to_dict(self, include_filters=False):
+    metrics = db.relationship(
+        "Metric",
+        secondary="widget_metrics",
+        back_populates="widgets"
+    )
+
+    dimensions = db.relationship(
+        "Dimension",
+        secondary="widget_dimensions",
+        back_populates="widgets"
+    )
+
+    def to_dict(self, include_config=False):
         data = {
             "id": self.id,
             "dashboard_id": self.dashboard_id,
             "dataset_id": self.dataset_id,
+            "dataset_name": self.dataset.name if self.dataset else None,
             "title": self.title,
             "type": self.type,
             "position_x": self.position_x,
@@ -61,6 +74,8 @@ class Widget(db.Model):
             "width": self.width,
             "height": self.height,
         }
-        if include_filters:
+        if include_config:
+            data["metrics"] = [m.to_dict() for m in self.metrics]
+            data["dimensions"] = [d.to_dict() for d in self.dimensions]
             data["filters"] = [f.to_dict() for f in self.filters]
         return data

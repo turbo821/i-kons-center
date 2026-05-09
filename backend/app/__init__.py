@@ -6,12 +6,14 @@ from flask_migrate import Migrate
 from app.database.db import db
 from app.config import Config
 
-# Импорт всех моделей до init_app — чтобы Alembic их видел
 import app.models  # noqa: F401
 
 from app.routes.auth_routes import auth_bp
 from app.routes.datasource_routes import datasource_bp
 from app.routes.dataset_routes import dataset_bp
+from app.routes.metric_routes import metric_bp
+from app.routes.dimension_routes import dimension_bp
+from app.routes.widget_routes import widget_bp
 
 
 jwt = JWTManager()
@@ -28,9 +30,11 @@ def create_app():
     jwt.init_app(app)
     migrate.init_app(app, db)
 
-    # Blueprints
     app.register_blueprint(auth_bp)
     app.register_blueprint(datasource_bp)
     app.register_blueprint(dataset_bp)
+    app.register_blueprint(metric_bp)
+    app.register_blueprint(dimension_bp)
+    app.register_blueprint(widget_bp)
 
     return app
