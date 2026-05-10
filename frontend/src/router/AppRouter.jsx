@@ -2,13 +2,14 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 
 import LoginPage from "../pages/LoginPage";
 import RegisterPage from "../pages/RegisterPage";
-import DashboardPage from "../pages/DashboardPage";
 import UsersPage from "../pages/UsersPage";
 import HomePage from "../pages/HomePage";
 import DataSourcesPage from "../pages/DataSourcesPage";
 import DataSourceDetailPage from "../pages/DataSourceDetailPage";
 import WidgetsPage from "../pages/WidgetsPage";
 import WidgetBuilderPage from "../pages/WidgetBuilderPage";
+import DashboardsPage from "../pages/DashboardsPage";
+import DashboardDetailPage from "../pages/DashboardDetailPage";
 
 import ProtectedRoute from "../components/ProtectedRoute";
 import RoleRoute from "./RoleRoute";
@@ -24,10 +25,18 @@ export default function AppRouter() {
           <Route path="/register" element={<RegisterPage />} />
 
           <Route
-            path="/dashboard"
+            path="/dashboards"
             element={
               <ProtectedRoute>
-                <DashboardPage />
+                <DashboardsPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/dashboards/:id"
+            element={
+              <ProtectedRoute>
+                <DashboardDetailPage />
               </ProtectedRoute>
             }
           />
