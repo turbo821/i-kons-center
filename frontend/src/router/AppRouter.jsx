@@ -10,6 +10,7 @@ import WidgetsPage from "../pages/WidgetsPage";
 import WidgetBuilderPage from "../pages/WidgetBuilderPage";
 import DashboardsPage from "../pages/DashboardsPage";
 import DashboardDetailPage from "../pages/DashboardDetailPage";
+import KpiPage from "../pages/KpiPage";
 
 import ProtectedRoute from "../components/ProtectedRoute";
 import RoleRoute from "./RoleRoute";
@@ -24,48 +25,13 @@ export default function AppRouter() {
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
 
-          <Route
-            path="/dashboards"
-            element={
-              <ProtectedRoute>
-                <DashboardsPage />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/dashboards/:id"
-            element={
-              <ProtectedRoute>
-                <DashboardDetailPage />
-              </ProtectedRoute>
-            }
-          />
+          <Route path="/dashboards" element={<ProtectedRoute><DashboardsPage /></ProtectedRoute>} />
+          <Route path="/dashboards/:id" element={<ProtectedRoute><DashboardDetailPage /></ProtectedRoute>} />
 
-          <Route
-            path="/datasources"
-            element={
-              <ProtectedRoute>
-                <DataSourcesPage />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/datasources/:id"
-            element={
-              <ProtectedRoute>
-                <DataSourceDetailPage />
-              </ProtectedRoute>
-            }
-          />
+          <Route path="/datasources" element={<ProtectedRoute><DataSourcesPage /></ProtectedRoute>} />
+          <Route path="/datasources/:id" element={<ProtectedRoute><DataSourceDetailPage /></ProtectedRoute>} />
 
-          <Route
-            path="/widgets"
-            element={
-              <ProtectedRoute>
-                <WidgetsPage />
-              </ProtectedRoute>
-            }
-          />
+          <Route path="/widgets" element={<ProtectedRoute><WidgetsPage /></ProtectedRoute>} />
           <Route
             path="/widgets/new"
             element={
@@ -86,6 +52,8 @@ export default function AppRouter() {
               </ProtectedRoute>
             }
           />
+
+          <Route path="/kpi" element={<ProtectedRoute><KpiPage /></ProtectedRoute>} />
 
           <Route
             path="/admin/users"

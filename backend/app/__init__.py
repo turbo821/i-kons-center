@@ -15,6 +15,8 @@ from app.routes.metric_routes import metric_bp
 from app.routes.dimension_routes import dimension_bp
 from app.routes.widget_routes import widget_bp
 from app.routes.dashboard_routes import dashboard_bp
+from app.routes.category_routes import category_bp
+from app.routes.kpi_routes import kpi_bp
 
 
 jwt = JWTManager()
@@ -38,5 +40,7 @@ def create_app():
     app.register_blueprint(dimension_bp)
     app.register_blueprint(widget_bp)
     app.register_blueprint(dashboard_bp)
+    app.register_blueprint(category_bp)
+    app.register_blueprint(kpi_bp)
 
     return app

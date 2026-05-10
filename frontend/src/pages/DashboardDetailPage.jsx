@@ -11,6 +11,7 @@ import {
   Pencil,
   Save,
   Edit3,
+  Target,
 } from "lucide-react";
 
 import {
@@ -21,9 +22,15 @@ import {
   updateDashboardLayout,
 } from "../api/dashboardApi";
 import { listWidgets, getWidgetData } from "../api/widgetApi";
+import {
+  listKpis,
+  addKpiToDashboard,
+  removeKpiFromDashboard,
+} from "../api/kpiApi";
 
 import { useAuth } from "../context/AuthContext";
 import WidgetRenderer from "../components/WidgetRenderer";
+import KpiCard from "../components/KpiCard";
 import Modal from "../components/Modal";
 
 
@@ -41,7 +48,8 @@ export default function DashboardDetailPage() {
   const [dashboard, setDashboard] = useState(null);
   const [loading, setLoading] = useState(true);
   const [editMode, setEditMode] = useState(false);
-  const [addOpen, setAddOpen] = useState(false);
+  const [addWidgetOpen, setAddWidgetOpen] = useState(false);
+  const [addKpiOpen, setAddKpiOpen] = useState(false);
   const [editMetaOpen, setEditMetaOpen] = useState(false);
 
   const [containerWidth, setContainerWidth] = useState(1200);
@@ -129,17 +137,27 @@ export default function DashboardDetailPage() {
     }
   };
 
+  const handleRemoveKpi = async (kpiId) => {
+    if (!window.confirm("Убрать KPI с дашборда?")) return;
+    try {
+      await removeKpiFromDashboard(id, kpiId);
+      load();
+    } catch (e) {
+      alert(e?.response?.data?.message || "Ошибка");
+    }
+  };
+
   if (loading) return <p className="text-slate-500">Загрузка...</p>;
   if (!dashboard) return <p className="text-red-600">Дашборд не найден</p>;
 
+  const kpis = dashboard.kpis || [];
+
   return (
     <div className="space-y-4">
+      {/* Шапка */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <Link
-            to="/dashboards"
-            className="rounded-lg p-2 hover:bg-slate-100"
-          >
+          <Link to="/dashboards" className="rounded-lg p-2 hover:bg-slate-100">
             <ArrowLeft size={18} />
           </Link>
 
@@ -156,9 +174,7 @@ export default function DashboardDetailPage() {
               )}
             </h1>
             {dashboard.description && (
-              <p className="text-sm text-slate-600">
-                {dashboard.description}
-              </p>
+              <p className="text-sm text-slate-600">{dashboard.description}</p>
             )}
           </div>
         </div>
@@ -166,7 +182,14 @@ export default function DashboardDetailPage() {
         {canEdit && (
           <div className="flex gap-2">
             <button
-              onClick={() => setAddOpen(true)}
+              onClick={() => setAddKpiOpen(true)}
+              className="flex items-center gap-2 rounded-xl bg-slate-100 px-4 py-2 text-sm font-medium hover:bg-slate-200"
+            >
+              <Target size={16} />
+              Добавить KPI
+            </button>
+            <button
+              onClick={() => setAddWidgetOpen(true)}
               className="flex items-center gap-2 rounded-xl bg-slate-100 px-4 py-2 text-sm font-medium hover:bg-slate-200"
             >
               <Plus size={16} />
@@ -194,13 +217,35 @@ export default function DashboardDetailPage() {
         </div>
       )}
 
+      {/* Полоса KPI */}
+      {kpis.length > 0 && (
+        <div className="rounded-2xl bg-slate-50 p-3">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            {kpis.map((kpi) => (
+              <div key={kpi.id} className="relative">
+                <KpiCard kpi={kpi} compact />
+                {editMode && canEdit && (
+                  <button
+                    onClick={() => handleRemoveKpi(kpi.id)}
+                    className="absolute right-2 top-2 rounded-lg bg-white p-1 text-red-600 shadow-sm hover:bg-red-50"
+                  >
+                    <X size={14} />
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Сетка виджетов */}
       <div id="grid-container" className="rounded-2xl bg-white p-3 shadow-sm">
         {dashboard.items.length === 0 ? (
           <div className="py-16 text-center">
             <p className="text-slate-500">На дашборде пока нет виджетов</p>
             {canEdit && (
               <button
-                onClick={() => setAddOpen(true)}
+                onClick={() => setAddWidgetOpen(true)}
                 className="mt-3 text-sm font-medium text-blue-600 hover:text-blue-500"
               >
                 + Добавить первый виджет
@@ -218,7 +263,6 @@ export default function DashboardDetailPage() {
             isResizable={editMode}
             onLayoutChange={handleLayoutChange}
             draggableHandle=".widget-drag-handle"
-            // Не начинать drag, если клик пришёл на элемент с этими классами/тегами
             draggableCancel=".no-drag,button,a,input,textarea,select"
             margin={[12, 12]}
           >
@@ -237,10 +281,18 @@ export default function DashboardDetailPage() {
       </div>
 
       <AddWidgetModal
-        open={addOpen}
-        onClose={() => setAddOpen(false)}
+        open={addWidgetOpen}
+        onClose={() => setAddWidgetOpen(false)}
         dashboardId={id}
         existingWidgetIds={dashboard.items.map((i) => i.id)}
+        onAdded={load}
+      />
+
+      <AddKpiModal
+        open={addKpiOpen}
+        onClose={() => setAddKpiOpen(false)}
+        dashboardId={id}
+        existingKpiIds={kpis.map((k) => k.id)}
         onAdded={load}
       />
 
@@ -255,7 +307,7 @@ export default function DashboardDetailPage() {
 }
 
 
-// ----- Плитка с виджетом -----
+// ===== плитка виджета =====
 function WidgetTile({ item, editMode, canEdit, onRemove }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
@@ -267,13 +319,9 @@ function WidgetTile({ item, editMode, canEdit, onRemove }) {
       .then(({ data }) => active && setData(data))
       .catch((e) => active && setError(e?.response?.data?.message || "Ошибка"))
       .finally(() => active && setLoading(false));
-    return () => {
-      active = false;
-    };
+    return () => { active = false; };
   }, [item.id]);
 
-  // Останавливаем mousedown на интерактивных элементах,
-  // иначе react-grid-layout перехватывает его как начало drag.
   const stopDrag = (e) => e.stopPropagation();
 
   return (
@@ -322,7 +370,7 @@ function WidgetTile({ item, editMode, canEdit, onRemove }) {
 }
 
 
-// ----- Модалка добавления виджета -----
+// ===== модалка добавления виджета =====
 function AddWidgetModal({ open, onClose, dashboardId, existingWidgetIds, onAdded }) {
   const [allWidgets, setAllWidgets] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -356,12 +404,7 @@ function AddWidgetModal({ open, onClose, dashboardId, existingWidgetIds, onAdded
   };
 
   return (
-    <Modal
-      open={open}
-      onClose={onClose}
-      title="Добавить виджет"
-      maxWidth="max-w-2xl"
-    >
+    <Modal open={open} onClose={onClose} title="Добавить виджет" maxWidth="max-w-2xl">
       {available.length === 0 ? (
         <p className="py-6 text-center text-sm text-slate-500">
           Нет доступных виджетов.
@@ -369,13 +412,6 @@ function AddWidgetModal({ open, onClose, dashboardId, existingWidgetIds, onAdded
           {existingWidgetIds.length > 0
             ? "Все виджеты уже добавлены на этот дашборд."
             : "Сначала создайте виджеты."}
-          <br />
-          <Link
-            to="/widgets/new"
-            className="mt-2 inline-block font-medium text-blue-600"
-          >
-            → Создать новый виджет
-          </Link>
         </p>
       ) : (
         <div className="max-h-96 space-y-2 overflow-auto">
@@ -402,7 +438,68 @@ function AddWidgetModal({ open, onClose, dashboardId, existingWidgetIds, onAdded
 }
 
 
-// ----- Модалка редактирования имени/описания -----
+// ===== модалка добавления KPI =====
+function AddKpiModal({ open, onClose, dashboardId, existingKpiIds, onAdded }) {
+  const [kpis, setKpis] = useState([]);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    listKpis().then(({ data }) => setKpis(data));
+  }, [open]);
+
+  const available = kpis.filter((k) => !existingKpiIds.includes(k.id));
+
+  const handleAdd = async (kpiId) => {
+    setBusy(true);
+    try {
+      await addKpiToDashboard(dashboardId, kpiId);
+      onClose();
+      onAdded();
+    } catch (e) {
+      alert(e?.response?.data?.message || "Ошибка");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal open={open} onClose={onClose} title="Добавить KPI" maxWidth="max-w-2xl">
+      {available.length === 0 ? (
+        <p className="py-6 text-center text-sm text-slate-500">
+          {existingKpiIds.length > 0
+            ? "Все KPI уже добавлены на этот дашборд."
+            : "Сначала создайте KPI на странице «Показатели KPI»."}
+        </p>
+      ) : (
+        <div className="max-h-96 space-y-2 overflow-auto">
+          {available.map((k) => (
+            <button
+              key={k.id}
+              onClick={() => handleAdd(k.id)}
+              disabled={busy}
+              className="flex w-full items-center justify-between rounded-lg border border-slate-200 p-3 text-left hover:border-blue-500 hover:bg-blue-50 disabled:opacity-50"
+            >
+              <div>
+                <p className="font-medium">{k.name}</p>
+                <p className="text-xs text-slate-500">
+                  {k.category_name || "без категории"}
+                  {k.target_value !== null
+                    ? ` · цель ${k.target_value}${k.unit ? " " + k.unit : ""}`
+                    : ""}
+                </p>
+              </div>
+              <Plus size={18} className="text-blue-600" />
+            </button>
+          ))}
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+
+// ===== модалка редактирования имени дашборда =====
 function EditMetaModal({ open, onClose, dashboard, onUpdated }) {
   const [name, setName] = useState("");
   const [desc, setDesc] = useState("");
@@ -418,10 +515,7 @@ function EditMetaModal({ open, onClose, dashboard, onUpdated }) {
     e.preventDefault();
     setBusy(true);
     try {
-      await updateDashboard(dashboard.id, {
-        name,
-        description: desc,
-      });
+      await updateDashboard(dashboard.id, { name, description: desc });
       onClose();
       onUpdated();
     } catch (e) {

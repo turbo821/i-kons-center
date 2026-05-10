@@ -4,19 +4,23 @@ REST API для дашбордов.
 Маршруты:
     GET    /api/dashboards                              — список
     POST   /api/dashboards                              — создать
-    GET    /api/dashboards/<id>                         — получить (с виджетами и позициями)
-    PUT    /api/dashboards/<id>                         — обновить мета (имя, описание)
+    GET    /api/dashboards/<id>                         — получить (с виджетами и KPI)
+    PUT    /api/dashboards/<id>                         — обновить мета
     DELETE /api/dashboards/<id>                         — удалить
+
     POST   /api/dashboards/<id>/widgets                 — добавить виджет
     DELETE /api/dashboards/<id>/widgets/<widget_id>     — убрать виджет
     PUT    /api/dashboards/<id>/layout                  — пакетное обновление позиций
+
+    POST   /api/dashboards/<id>/kpis                    — добавить KPI
+    DELETE /api/dashboards/<id>/kpis/<kpi_id>           — убрать KPI
 """
 
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 
 from app.database.db import db
-from app.models import Dashboard, Widget, DashboardWidget
+from app.models import Dashboard, Widget, DashboardWidget, KPI, DashboardKPI
 from app.auth.decorators import role_required
 
 
@@ -25,9 +29,6 @@ dashboard_bp = Blueprint("dashboards", __name__, url_prefix="/api/dashboards")
 EDITOR_ROLES = ("admin", "expert")
 
 
-# ---------------------------------------------------------------------------
-# LIST
-# ---------------------------------------------------------------------------
 @dashboard_bp.route("", methods=["GET"])
 @jwt_required()
 def list_dashboards():
@@ -35,9 +36,6 @@ def list_dashboards():
     return jsonify([d.to_dict() for d in items])
 
 
-# ---------------------------------------------------------------------------
-# CREATE
-# ---------------------------------------------------------------------------
 @dashboard_bp.route("", methods=["POST"])
 @role_required(*EDITOR_ROLES)
 def create_dashboard():
@@ -59,9 +57,6 @@ def create_dashboard():
     return jsonify(dashboard.to_dict()), 201
 
 
-# ---------------------------------------------------------------------------
-# GET ONE
-# ---------------------------------------------------------------------------
 @dashboard_bp.route("/<int:dashboard_id>", methods=["GET"])
 @jwt_required()
 def get_dashboard(dashboard_id):
@@ -71,9 +66,6 @@ def get_dashboard(dashboard_id):
     return jsonify(dashboard.to_dict(include_widgets=True))
 
 
-# ---------------------------------------------------------------------------
-# UPDATE meta
-# ---------------------------------------------------------------------------
 @dashboard_bp.route("/<int:dashboard_id>", methods=["PUT"])
 @role_required(*EDITOR_ROLES)
 def update_dashboard(dashboard_id):
@@ -95,9 +87,6 @@ def update_dashboard(dashboard_id):
     return jsonify(dashboard.to_dict())
 
 
-# ---------------------------------------------------------------------------
-# DELETE
-# ---------------------------------------------------------------------------
 @dashboard_bp.route("/<int:dashboard_id>", methods=["DELETE"])
 @role_required(*EDITOR_ROLES)
 def delete_dashboard(dashboard_id):
@@ -105,25 +94,17 @@ def delete_dashboard(dashboard_id):
     if dashboard is None:
         return jsonify({"message": "Не найдено"}), 404
 
-    db.session.delete(dashboard)  # cascade сносит DashboardWidget-записи
+    db.session.delete(dashboard)
     db.session.commit()
     return jsonify({"message": "Удалено"})
 
 
 # ---------------------------------------------------------------------------
-# ADD widget
+# Виджеты
 # ---------------------------------------------------------------------------
 @dashboard_bp.route("/<int:dashboard_id>/widgets", methods=["POST"])
 @role_required(*EDITOR_ROLES)
 def add_widget_to_dashboard(dashboard_id):
-    """
-    Body:
-    {
-      "widget_id": 1,
-      "position_x": 0, "position_y": 0,
-      "width": 6, "height": 4
-    }
-    """
     dashboard = db.session.get(Dashboard, dashboard_id)
     if dashboard is None:
         return jsonify({"message": "Дашборд не найден"}), 404
@@ -137,7 +118,6 @@ def add_widget_to_dashboard(dashboard_id):
     if widget is None:
         return jsonify({"message": "Виджет не найден"}), 404
 
-    # Защита: не дублируем размещение того же виджета на том же дашборде
     existing = (
         db.session.query(DashboardWidget)
         .filter_by(dashboard_id=dashboard_id, widget_id=widget_id)
@@ -162,9 +142,6 @@ def add_widget_to_dashboard(dashboard_id):
     return jsonify(placement.to_dict()), 201
 
 
-# ---------------------------------------------------------------------------
-# REMOVE widget
-# ---------------------------------------------------------------------------
 @dashboard_bp.route(
     "/<int:dashboard_id>/widgets/<int:widget_id>",
     methods=["DELETE"]
@@ -184,24 +161,9 @@ def remove_widget_from_dashboard(dashboard_id, widget_id):
     return jsonify({"message": "Удалено"})
 
 
-# ---------------------------------------------------------------------------
-# UPDATE LAYOUT (пакетное обновление позиций)
-# ---------------------------------------------------------------------------
 @dashboard_bp.route("/<int:dashboard_id>/layout", methods=["PUT"])
 @role_required(*EDITOR_ROLES)
 def update_dashboard_layout(dashboard_id):
-    """
-    Сохраняет новые координаты для всех виджетов сразу.
-    Вызывается после drag-and-drop в react-grid-layout.
-
-    Body:
-    {
-      "items": [
-        {"widget_id": 1, "position_x": 0, "position_y": 0, "width": 6, "height": 4},
-        {"widget_id": 2, "position_x": 6, "position_y": 0, "width": 6, "height": 4}
-      ]
-    }
-    """
     dashboard = db.session.get(Dashboard, dashboard_id)
     if dashboard is None:
         return jsonify({"message": "Дашборд не найден"}), 404
@@ -209,7 +171,6 @@ def update_dashboard_layout(dashboard_id):
     data = request.json or {}
     items = data.get("items") or []
 
-    # Получаем все размещения одним запросом и складываем в dict
     placements = (
         db.session.query(DashboardWidget)
         .filter_by(dashboard_id=dashboard_id)
@@ -221,7 +182,7 @@ def update_dashboard_layout(dashboard_id):
         wid = item.get("widget_id")
         placement = by_widget.get(wid)
         if not placement:
-            continue  # widget уже не на дашборде — игнорируем
+            continue
 
         for key in ("position_x", "position_y", "width", "height"):
             if key in item:
@@ -229,3 +190,59 @@ def update_dashboard_layout(dashboard_id):
 
     db.session.commit()
     return jsonify({"message": "Layout сохранён"})
+
+
+# ---------------------------------------------------------------------------
+# KPI
+# ---------------------------------------------------------------------------
+@dashboard_bp.route("/<int:dashboard_id>/kpis", methods=["POST"])
+@role_required(*EDITOR_ROLES)
+def add_kpi_to_dashboard(dashboard_id):
+    """Body: {"kpi_id": 1}"""
+    dashboard = db.session.get(Dashboard, dashboard_id)
+    if dashboard is None:
+        return jsonify({"message": "Дашборд не найден"}), 404
+
+    data = request.json or {}
+    kpi_id = data.get("kpi_id")
+    if not kpi_id:
+        return jsonify({"message": "kpi_id обязателен"}), 400
+
+    kpi = db.session.get(KPI, kpi_id)
+    if kpi is None:
+        return jsonify({"message": "KPI не найден"}), 404
+
+    existing = (
+        db.session.query(DashboardKPI)
+        .filter_by(dashboard_id=dashboard_id, kpi_id=kpi_id)
+        .first()
+    )
+    if existing:
+        return jsonify({
+            "message": "KPI уже добавлен на этот дашборд"
+        }), 409
+
+    link = DashboardKPI(dashboard_id=dashboard_id, kpi_id=kpi_id)
+    db.session.add(link)
+    db.session.commit()
+
+    return jsonify({"dashboard_id": dashboard_id, "kpi_id": kpi_id}), 201
+
+
+@dashboard_bp.route(
+    "/<int:dashboard_id>/kpis/<int:kpi_id>",
+    methods=["DELETE"]
+)
+@role_required(*EDITOR_ROLES)
+def remove_kpi_from_dashboard(dashboard_id, kpi_id):
+    link = (
+        db.session.query(DashboardKPI)
+        .filter_by(dashboard_id=dashboard_id, kpi_id=kpi_id)
+        .first()
+    )
+    if link is None:
+        return jsonify({"message": "Связь не найдена"}), 404
+
+    db.session.delete(link)
+    db.session.commit()
+    return jsonify({"message": "Удалено"})
