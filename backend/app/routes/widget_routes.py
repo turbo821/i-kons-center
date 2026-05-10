@@ -11,6 +11,7 @@ REST API для виджетов.
 """
 
 from typing import Optional
+
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required
 
@@ -22,6 +23,7 @@ from app.models import (
     Dimension,
     Filter,
     DatasetField,
+    DashboardWidget,
 )
 from app.auth.decorators import role_required
 from app.services.widget_data_service import (
@@ -37,12 +39,7 @@ EDITOR_ROLES = ("admin", "expert")
 ALLOWED_WIDGET_TYPES = {"bar", "line", "pie", "table", "kpi_card"}
 
 
-# ---------------------------------------------------------------------------
-# Вспомогательные функции для синхронизации связей
-# ---------------------------------------------------------------------------
-
 def _resolve_metrics(metric_ids: list[int]) -> tuple[list[Metric], Optional[str]]:
-    """Получить метрики по id, валидируя существование."""
     if not metric_ids:
         return [], None
     items = db.session.query(Metric).filter(Metric.id.in_(metric_ids)).all()
@@ -61,8 +58,6 @@ def _resolve_dimensions(dim_ids: list[int]) -> tuple[list[Dimension], Optional[s
 
 
 def _replace_filters(widget: Widget, filters_data: list[dict]) -> Optional[str]:
-    """Полностью заменяет фильтры виджета. Возвращает текст ошибки или None."""
-    # Удаляем старые
     for old in list(widget.filters):
         db.session.delete(old)
     db.session.flush()
@@ -95,20 +90,29 @@ def _replace_filters(widget: Widget, filters_data: list[dict]) -> Optional[str]:
     return None
 
 
-
 # ---------------------------------------------------------------------------
 # LIST
 # ---------------------------------------------------------------------------
 @widget_bp.route("", methods=["GET"])
 @jwt_required()
 def list_widgets():
-    q = db.session.query(Widget)
-
+    """
+    Возвращает все виджеты. Опционально можно фильтровать
+    по dashboard_id — вернутся виджеты, размещённые на дашборде.
+    """
     dashboard_id = request.args.get("dashboard_id", type=int)
-    if dashboard_id is not None:
-        q = q.filter_by(dashboard_id=dashboard_id)
 
-    items = q.order_by(Widget.id.desc()).all()
+    if dashboard_id is not None:
+        # Виджеты, размещённые на дашборде (через DashboardWidget)
+        items = (
+            db.session.query(Widget)
+            .join(DashboardWidget, DashboardWidget.widget_id == Widget.id)
+            .filter(DashboardWidget.dashboard_id == dashboard_id)
+            .all()
+        )
+    else:
+        items = db.session.query(Widget).order_by(Widget.id.desc()).all()
+
     return jsonify([w.to_dict() for w in items])
 
 
@@ -126,14 +130,7 @@ def create_widget():
       "type": "bar",
       "metric_ids": [1, 2],
       "dimension_ids": [3],
-      "filters": [
-         {"field_id": 5, "operator": "eq", "value": "active"}
-      ],
-      "dashboard_id": null,    // опционально
-      "position_x": 0,
-      "position_y": 0,
-      "width": 6,
-      "height": 4
+      "filters": [{"field_id": 5, "operator": "eq", "value": "active"}]
     }
     """
     data = request.json or {}
@@ -146,7 +143,7 @@ def create_widget():
     if data["type"] not in ALLOWED_WIDGET_TYPES:
         return jsonify({
             "message": (
-                f"Недопустимый тип виджета. Разрешены: "
+                f"Недопустимый тип. Разрешены: "
                 f"{', '.join(ALLOWED_WIDGET_TYPES)}"
             )
         }), 400
@@ -163,20 +160,15 @@ def create_widget():
         return jsonify({"message": err}), 400
 
     widget = Widget(
-        dashboard_id=data.get("dashboard_id"),
         dataset_id=data["dataset_id"],
         title=data["title"],
         type=data["type"],
-        position_x=data.get("position_x", 0),
-        position_y=data.get("position_y", 0),
-        width=data.get("width", 6),
-        height=data.get("height", 4),
     )
     widget.metrics = metrics
     widget.dimensions = dimensions
 
     db.session.add(widget)
-    db.session.flush()  # нужен widget.id для фильтров
+    db.session.flush()
 
     err = _replace_filters(widget, data.get("filters") or [])
     if err:
@@ -211,14 +203,12 @@ def update_widget(widget_id):
 
     data = request.json or {}
 
-    # Простые поля
-    for field in ("title", "type", "position_x", "position_y", "width", "height", "dashboard_id"):
+    for field in ("title", "type"):
         if field in data:
             if field == "type" and data[field] not in ALLOWED_WIDGET_TYPES:
                 return jsonify({"message": "Недопустимый тип"}), 400
             setattr(widget, field, data[field])
 
-    # Связи
     if "metric_ids" in data:
         metrics, err = _resolve_metrics(data["metric_ids"])
         if err:
@@ -257,7 +247,7 @@ def delete_widget(widget_id):
 
 
 # ---------------------------------------------------------------------------
-# DATA — главный endpoint, агрегирует данные для отрисовки
+# DATA
 # ---------------------------------------------------------------------------
 @widget_bp.route("/<int:widget_id>/data", methods=["GET"])
 @jwt_required()

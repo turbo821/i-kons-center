@@ -14,6 +14,7 @@ from app.routes.dataset_routes import dataset_bp
 from app.routes.metric_routes import metric_bp
 from app.routes.dimension_routes import dimension_bp
 from app.routes.widget_routes import widget_bp
+from app.routes.dashboard_routes import dashboard_bp
 
 
 jwt = JWTManager()
@@ -36,5 +37,6 @@ def create_app():
     app.register_blueprint(metric_bp)
     app.register_blueprint(dimension_bp)
     app.register_blueprint(widget_bp)
+    app.register_blueprint(dashboard_bp)
 
     return app

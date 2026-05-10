@@ -20,9 +20,9 @@ export default function Sidebar({ collapsed, setCollapsed }) {
 
   const menuItems = [
     {
-      title: "Главная панель",
+      title: "Дашборды",
       icon: LayoutDashboard,
-      path: "/dashboard",
+      path: "/dashboards",
     },
     {
       title: "Виджеты",

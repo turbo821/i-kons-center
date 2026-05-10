@@ -1,6 +1,4 @@
-"""
-Единая точка импорта всех моделей.
-"""
+"""Единая точка импорта всех моделей."""
 
 from app.models.role import Role
 from app.models.user_role import UserRole
@@ -15,25 +13,17 @@ from app.models.filter import Filter
 
 from app.models.dashboard import Dashboard
 from app.models.widget import Widget
+from app.models.dashboard_widget import DashboardWidget
 
 from app.models.category import Category
 from app.models.kpi import KPI, DashboardKPI
 
 __all__ = [
-    "Role",
-    "UserRole",
-    "User",
-    "DataSource",
-    "Dataset",
-    "DatasetField",
-    "Metric",
-    "WidgetMetric",
-    "Dimension",
-    "WidgetDimension",
+    "Role", "UserRole", "User",
+    "DataSource", "Dataset", "DatasetField",
+    "Metric", "WidgetMetric",
+    "Dimension", "WidgetDimension",
     "Filter",
-    "Dashboard",
-    "Widget",
-    "Category",
-    "KPI",
-    "DashboardKPI",
+    "Dashboard", "Widget", "DashboardWidget",
+    "Category", "KPI", "DashboardKPI",
 ]

@@ -28,13 +28,14 @@ class Dashboard(db.Model):
         back_populates="dashboards"
     )
 
-    widgets = db.relationship(
-        "Widget",
+    # Размещения виджетов на этом дашборде (с координатами)
+    dashboard_widgets = db.relationship(
+        "DashboardWidget",
         back_populates="dashboard",
         cascade="all, delete-orphan"
     )
 
-    # KPI, отображаемые на дашборде (m2m через DashboardKPI)
+    # KPI на дашборде
     kpis = db.relationship(
         "KPI",
         secondary="dashboard_kpis",
@@ -50,5 +51,16 @@ class Dashboard(db.Model):
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
         if include_widgets:
-            data["widgets"] = [w.to_dict() for w in self.widgets]
+            # Возвращаем позиции и метаданные виджетов вместе
+            data["items"] = [
+                {
+                    **dw.widget.to_dict(),
+                    "position_x": dw.position_x,
+                    "position_y": dw.position_y,
+                    "width": dw.width,
+                    "height": dw.height,
+                }
+                for dw in self.dashboard_widgets
+                if dw.widget is not None
+            ]
         return data
