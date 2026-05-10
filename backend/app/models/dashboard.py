@@ -22,7 +22,6 @@ class Dashboard(db.Model):
         nullable=False
     )
 
-    # Связи
     creator = db.relationship(
         "User",
         back_populates="dashboards"
@@ -34,10 +33,19 @@ class Dashboard(db.Model):
         cascade="all, delete-orphan"
     )
 
+    dashboard_kpis = db.relationship(
+        "DashboardKPI",
+        back_populates="dashboard",
+        cascade="all, delete-orphan"
+    )
+
+    # Технический shortcut: KPI напрямую (без позиций)
     kpis = db.relationship(
         "KPI",
         secondary="dashboard_kpis",
-        back_populates="dashboards"
+        back_populates="dashboards",
+        viewonly=True,
+        overlaps="dashboard_kpis,dashboard_links"
     )
 
     def to_dict(self, include_widgets=False):
@@ -49,16 +57,36 @@ class Dashboard(db.Model):
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
         if include_widgets:
-            data["items"] = [
-                {
+            # Единый массив элементов: и виджеты, и KPI с координатами.
+            # Поле kind помогает фронту отрисовать правильный компонент.
+            items = []
+
+            for dw in self.dashboard_widgets:
+                if dw.widget is None:
+                    continue
+                items.append({
+                    "kind": "widget",
+                    "ref_id": dw.widget.id,
                     **dw.widget.to_dict(),
                     "position_x": dw.position_x,
                     "position_y": dw.position_y,
                     "width": dw.width,
                     "height": dw.height,
-                }
-                for dw in self.dashboard_widgets
-                if dw.widget is not None
-            ]
-            data["kpis"] = [k.to_dict() for k in self.kpis]
+                })
+
+            for dk in self.dashboard_kpis:
+                if dk.kpi is None:
+                    continue
+                items.append({
+                    "kind": "kpi",
+                    "ref_id": dk.kpi.id,
+                    **dk.kpi.to_dict(),
+                    "position_x": dk.position_x,
+                    "position_y": dk.position_y,
+                    "width": dk.width,
+                    "height": dk.height,
+                })
+
+            data["items"] = items
+
         return data

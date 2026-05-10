@@ -37,6 +37,10 @@ import Modal from "../components/Modal";
 const GRID_COLS = 12;
 const ROW_HEIGHT = 60;
 
+// Префиксы ключей сетки — чтобы виджеты и KPI не пересекались по id
+const KEY_WIDGET = "w";
+const KEY_KPI = "k";
+
 
 export default function DashboardDetailPage() {
   const { id } = useParams();
@@ -81,10 +85,13 @@ export default function DashboardDetailPage() {
     return () => observer.disconnect();
   }, [dashboard]);
 
+  // Все элементы дашборда — единый массив с полем kind
+  const items = dashboard?.items || [];
+
+  // Layout для GridLayout: ключ = kind_refId, например "w_42" или "k_15"
   const layout = useMemo(() => {
-    if (!dashboard?.items) return [];
-    return dashboard.items.map((item) => ({
-      i: String(item.id),
+    return items.map((item) => ({
+      i: `${item.kind === "kpi" ? KEY_KPI : KEY_WIDGET}_${item.ref_id}`,
       x: item.position_x,
       y: item.position_y,
       w: item.width,
@@ -92,36 +99,44 @@ export default function DashboardDetailPage() {
       minW: 2,
       minH: 2,
     }));
-  }, [dashboard]);
+  }, [items]);
 
   const handleLayoutChange = async (newLayout) => {
     if (!editMode || !dashboard) return;
 
-    const items = newLayout.map((l) => ({
-      widget_id: Number(l.i),
-      position_x: l.x,
-      position_y: l.y,
-      width: l.w,
-      height: l.h,
-    }));
+    // Парсим ключи обратно в {kind, ref_id}
+    const payload = newLayout.map((l) => {
+      const [prefix, refIdStr] = l.i.split("_");
+      return {
+        kind: prefix === KEY_KPI ? "kpi" : "widget",
+        ref_id: Number(refIdStr),
+        position_x: l.x,
+        position_y: l.y,
+        width: l.w,
+        height: l.h,
+      };
+    });
 
+    // Оптимистичное обновление локального state
     setDashboard((prev) => ({
       ...prev,
       items: prev.items.map((it) => {
-        const lay = newLayout.find((l) => Number(l.i) === it.id);
+        const lay = payload.find(
+          (p) => p.kind === it.kind && p.ref_id === it.ref_id
+        );
         if (!lay) return it;
         return {
           ...it,
-          position_x: lay.x,
-          position_y: lay.y,
-          width: lay.w,
-          height: lay.h,
+          position_x: lay.position_x,
+          position_y: lay.position_y,
+          width: lay.width,
+          height: lay.height,
         };
       }),
     }));
 
     try {
-      await updateDashboardLayout(id, items);
+      await updateDashboardLayout(id, payload);
     } catch (e) {
       console.error("Не удалось сохранить layout:", e);
     }
@@ -149,8 +164,6 @@ export default function DashboardDetailPage() {
 
   if (loading) return <p className="text-slate-500">Загрузка...</p>;
   if (!dashboard) return <p className="text-red-600">Дашборд не найден</p>;
-
-  const kpis = dashboard.kpis || [];
 
   return (
     <div className="space-y-4">
@@ -212,44 +225,20 @@ export default function DashboardDetailPage() {
 
       {editMode && (
         <div className="rounded-xl bg-blue-50 px-4 py-3 text-sm text-blue-900">
-          Режим редактирования: перетаскивайте виджеты за заголовок и меняйте
-          их размер. Изменения сохраняются автоматически.
+          Режим редактирования: перетаскивайте виджеты и KPI за заголовок,
+          меняйте размер. Изменения сохраняются автоматически.
         </div>
       )}
 
-      {/* Полоса KPI */}
-      {kpis.length > 0 && (
-        <div className="rounded-2xl bg-slate-50 p-3">
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {kpis.map((kpi) => (
-              <div key={kpi.id} className="relative">
-                <KpiCard kpi={kpi} compact />
-                {editMode && canEdit && (
-                  <button
-                    onClick={() => handleRemoveKpi(kpi.id)}
-                    className="absolute right-2 top-2 rounded-lg bg-white p-1 text-red-600 shadow-sm hover:bg-red-50"
-                  >
-                    <X size={14} />
-                  </button>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Сетка виджетов */}
+      {/* Единая сетка */}
       <div id="grid-container" className="rounded-2xl bg-white p-3 shadow-sm">
-        {dashboard.items.length === 0 ? (
+        {items.length === 0 ? (
           <div className="py-16 text-center">
-            <p className="text-slate-500">На дашборде пока нет виджетов</p>
+            <p className="text-slate-500">На дашборде пока нет элементов</p>
             {canEdit && (
-              <button
-                onClick={() => setAddWidgetOpen(true)}
-                className="mt-3 text-sm font-medium text-blue-600 hover:text-blue-500"
-              >
-                + Добавить первый виджет
-              </button>
+              <p className="mt-3 text-sm text-slate-500">
+                Добавьте виджет или KPI с помощью кнопок выше
+              </p>
             )}
           </div>
         ) : (
@@ -266,16 +255,31 @@ export default function DashboardDetailPage() {
             draggableCancel=".no-drag,button,a,input,textarea,select"
             margin={[12, 12]}
           >
-            {dashboard.items.map((item) => (
-              <div key={String(item.id)}>
-                <WidgetTile
-                  item={item}
-                  editMode={editMode}
-                  canEdit={canEdit}
-                  onRemove={() => handleRemoveWidget(item.id)}
-                />
-              </div>
-            ))}
+            {items.map((item) => {
+              const key = `${
+                item.kind === "kpi" ? KEY_KPI : KEY_WIDGET
+              }_${item.ref_id}`;
+
+              return (
+                <div key={key}>
+                  {item.kind === "widget" ? (
+                    <WidgetTile
+                      item={item}
+                      editMode={editMode}
+                      canEdit={canEdit}
+                      onRemove={() => handleRemoveWidget(item.ref_id)}
+                    />
+                  ) : (
+                    <KpiTile
+                      item={item}
+                      editMode={editMode}
+                      canEdit={canEdit}
+                      onRemove={() => handleRemoveKpi(item.ref_id)}
+                    />
+                  )}
+                </div>
+              );
+            })}
           </GridLayout>
         )}
       </div>
@@ -284,7 +288,9 @@ export default function DashboardDetailPage() {
         open={addWidgetOpen}
         onClose={() => setAddWidgetOpen(false)}
         dashboardId={id}
-        existingWidgetIds={dashboard.items.map((i) => i.id)}
+        existingWidgetIds={items
+          .filter((i) => i.kind === "widget")
+          .map((i) => i.ref_id)}
         onAdded={load}
       />
 
@@ -292,7 +298,9 @@ export default function DashboardDetailPage() {
         open={addKpiOpen}
         onClose={() => setAddKpiOpen(false)}
         dashboardId={id}
-        existingKpiIds={kpis.map((k) => k.id)}
+        existingKpiIds={items
+          .filter((i) => i.kind === "kpi")
+          .map((i) => i.ref_id)}
         onAdded={load}
       />
 
@@ -315,12 +323,14 @@ function WidgetTile({ item, editMode, canEdit, onRemove }) {
 
   useEffect(() => {
     let active = true;
-    getWidgetData(item.id)
+    getWidgetData(item.ref_id)
       .then(({ data }) => active && setData(data))
       .catch((e) => active && setError(e?.response?.data?.message || "Ошибка"))
       .finally(() => active && setLoading(false));
-    return () => { active = false; };
-  }, [item.id]);
+    return () => {
+      active = false;
+    };
+  }, [item.ref_id]);
 
   const stopDrag = (e) => e.stopPropagation();
 
@@ -334,7 +344,7 @@ function WidgetTile({ item, editMode, canEdit, onRemove }) {
         <div className="flex flex-1 items-center gap-2 overflow-hidden">
           <p className="truncate text-sm font-semibold">{item.title}</p>
           <Link
-            to={`/widgets/${item.id}/edit`}
+            to={`/widgets/${item.ref_id}/edit`}
             onMouseDown={stopDrag}
             onClick={(e) => e.stopPropagation()}
             className="no-drag rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
@@ -370,8 +380,46 @@ function WidgetTile({ item, editMode, canEdit, onRemove }) {
 }
 
 
+// ===== плитка KPI =====
+function KpiTile({ item, editMode, canEdit, onRemove }) {
+  // item уже содержит все поля KPI (см. to_dict в Dashboard)
+  // Передаём его как объект kpi в KpiCard. Но id в KpiCard ожидает поле id,
+  // а у нас в едином items это ref_id — нормализуем.
+  const kpi = { ...item, id: item.ref_id };
+
+  return (
+    <div className="relative h-full w-full">
+      {editMode && (
+        <div className="widget-drag-handle absolute inset-x-0 top-0 z-10 h-8 cursor-move" />
+      )}
+
+      <KpiCard kpi={kpi} compact />
+
+      {editMode && canEdit && (
+        <button
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            onRemove();
+          }}
+          className="no-drag absolute right-2 top-2 z-20 rounded-lg bg-white p-1 text-red-600 shadow-sm hover:bg-red-50"
+        >
+          <X size={14} />
+        </button>
+      )}
+    </div>
+  );
+}
+
+
 // ===== модалка добавления виджета =====
-function AddWidgetModal({ open, onClose, dashboardId, existingWidgetIds, onAdded }) {
+function AddWidgetModal({
+  open,
+  onClose,
+  dashboardId,
+  existingWidgetIds,
+  onAdded,
+}) {
   const [allWidgets, setAllWidgets] = useState([]);
   const [busy, setBusy] = useState(false);
 
@@ -404,7 +452,12 @@ function AddWidgetModal({ open, onClose, dashboardId, existingWidgetIds, onAdded
   };
 
   return (
-    <Modal open={open} onClose={onClose} title="Добавить виджет" maxWidth="max-w-2xl">
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="Добавить виджет"
+      maxWidth="max-w-2xl"
+    >
       {available.length === 0 ? (
         <p className="py-6 text-center text-sm text-slate-500">
           Нет доступных виджетов.
@@ -439,7 +492,13 @@ function AddWidgetModal({ open, onClose, dashboardId, existingWidgetIds, onAdded
 
 
 // ===== модалка добавления KPI =====
-function AddKpiModal({ open, onClose, dashboardId, existingKpiIds, onAdded }) {
+function AddKpiModal({
+  open,
+  onClose,
+  dashboardId,
+  existingKpiIds,
+  onAdded,
+}) {
   const [kpis, setKpis] = useState([]);
   const [busy, setBusy] = useState(false);
 
@@ -464,7 +523,12 @@ function AddKpiModal({ open, onClose, dashboardId, existingKpiIds, onAdded }) {
   };
 
   return (
-    <Modal open={open} onClose={onClose} title="Добавить KPI" maxWidth="max-w-2xl">
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="Добавить KPI"
+      maxWidth="max-w-2xl"
+    >
       {available.length === 0 ? (
         <p className="py-6 text-center text-sm text-slate-500">
           {existingKpiIds.length > 0
@@ -485,7 +549,9 @@ function AddKpiModal({ open, onClose, dashboardId, existingKpiIds, onAdded }) {
                 <p className="text-xs text-slate-500">
                   {k.category_name || "без категории"}
                   {k.target_value !== null
-                    ? ` · цель ${k.target_value}${k.unit ? " " + k.unit : ""}`
+                    ? ` · цель ${k.target_value}${
+                        k.unit ? " " + k.unit : ""
+                      }`
                     : ""}
                 </p>
               </div>

@@ -16,7 +16,8 @@ from app.models.widget import Widget
 from app.models.dashboard_widget import DashboardWidget
 
 from app.models.category import Category
-from app.models.kpi import KPI, DashboardKPI
+from app.models.kpi import KPI
+from app.models.dashboard_kpi import DashboardKPI
 
 __all__ = [
     "Role", "UserRole", "User",

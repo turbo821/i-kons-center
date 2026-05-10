@@ -1,5 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { Plus, Trash2, Pencil, Filter as FilterIcon, FolderTree } from "lucide-react";
+import {
+  Plus,
+  Trash2,
+  Pencil,
+  Filter as FilterIcon,
+  FolderTree,
+} from "lucide-react";
 
 import {
   listKpis,
@@ -12,11 +18,22 @@ import {
   createCategory,
   deleteCategory,
 } from "../api/categoryApi";
-import { listMetrics } from "../api/metricApi";
+import { listMetrics, createMetric } from "../api/metricApi";
+import { listDatasets, getDataset } from "../api/datasetApi";
 
 import { useAuth } from "../context/AuthContext";
 import Modal from "../components/Modal";
 import KpiCard from "../components/KpiCard";
+
+
+const AGGREGATIONS = [
+  { value: "sum", label: "Сумма", numericOnly: true },
+  { value: "avg", label: "Среднее", numericOnly: true },
+  { value: "min", label: "Минимум", numericOnly: true },
+  { value: "max", label: "Максимум", numericOnly: true },
+  { value: "count", label: "Количество", numericOnly: false },
+  { value: "count_distinct", label: "Уникальных", numericOnly: false },
+];
 
 
 export default function KpiPage() {
@@ -107,7 +124,6 @@ export default function KpiPage() {
         )}
       </div>
 
-      {/* Фильтр по категориям */}
       {categories.length > 0 && (
         <div className="flex flex-wrap items-center gap-2">
           <FilterIcon size={14} className="text-slate-500" />
@@ -152,11 +168,11 @@ export default function KpiPage() {
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
         {filteredKpis.map((kpi) => (
-          <div key={kpi.id} className="relative">
+          <div key={kpi.id} className="group relative">
             <KpiCard kpi={kpi} />
 
             {canEdit && (
-              <div className="absolute right-3 top-3 flex gap-1 opacity-0 transition-opacity hover:opacity-100 focus-within:opacity-100 group-hover:opacity-100">
+              <div className="absolute right-3 top-12 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
                 <button
                   onClick={() => handleEdit(kpi)}
                   className="rounded-lg bg-white p-1.5 text-slate-500 shadow-sm hover:text-blue-600"
@@ -195,7 +211,7 @@ export default function KpiPage() {
 
 
 // =====================================================================
-// Редактор KPI
+// Редактор KPI с возможностью создавать метрики «на лету»
 // =====================================================================
 function KpiEditorModal({ open, onClose, editingKpi, categories, onSaved }) {
   const isEdit = !!editingKpi;
@@ -213,14 +229,27 @@ function KpiEditorModal({ open, onClose, editingKpi, categories, onSaved }) {
   });
 
   const [metrics, setMetrics] = useState([]);
+  const [datasets, setDatasets] = useState([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
 
-  // Подгружаем метрики и заполняем форму
+  // ----- Состояние «создателя метрики» (мини-конструктор) -----
+  const [creatorOpen, setCreatorOpen] = useState(false);
+  const [creator, setCreator] = useState({
+    dataset_id: "",
+    field_id: "",
+    aggregation: "sum",
+  });
+  const [creatorFields, setCreatorFields] = useState([]);
+  const [creatorBusy, setCreatorBusy] = useState(false);
+
+  // Подгрузка справочников при открытии
   useEffect(() => {
     if (!open) return;
-
-    listMetrics().then(({ data }) => setMetrics(data));
+    Promise.all([listMetrics(), listDatasets()]).then(([mRes, dRes]) => {
+      setMetrics(mRes.data);
+      setDatasets(dRes.data);
+    });
 
     if (editingKpi) {
       setForm({
@@ -248,7 +277,22 @@ function KpiEditorModal({ open, onClose, editingKpi, categories, onSaved }) {
       });
     }
     setErr(null);
+    setCreatorOpen(false);
+    setCreator({ dataset_id: "", field_id: "", aggregation: "sum" });
+    setCreatorFields([]);
   }, [open, editingKpi]);
+
+  // При смене датасета в мини-конструкторе подгружаем поля
+  useEffect(() => {
+    if (!creator.dataset_id) {
+      setCreatorFields([]);
+      setCreator((c) => ({ ...c, field_id: "" }));
+      return;
+    }
+    getDataset(creator.dataset_id).then(({ data }) => {
+      setCreatorFields(data.fields || []);
+    });
+  }, [creator.dataset_id]);
 
   const change = (key) => (e) =>
     setForm((f) => ({ ...f, [key]: e.target.value }));
@@ -286,6 +330,46 @@ function KpiEditorModal({ open, onClose, editingKpi, categories, onSaved }) {
       setBusy(false);
     }
   };
+
+  // Создание метрики «на лету»
+  const handleCreateMetric = async () => {
+    if (!creator.field_id) return;
+    const field = creatorFields.find((f) => f.id === Number(creator.field_id));
+    if (!field) return;
+
+    const aggLabel = AGGREGATIONS.find((a) => a.value === creator.aggregation)?.label;
+    const metricName = `${aggLabel} ${field.name}`;
+
+    setCreatorBusy(true);
+    try {
+      const { data } = await createMetric({
+        field_id: Number(creator.field_id),
+        name: metricName,
+        aggregation_type: creator.aggregation,
+      });
+
+      // Обновляем список и выбираем новую
+      setMetrics((prev) =>
+        prev.find((m) => m.id === data.id) ? prev : [...prev, data]
+      );
+      setForm((f) => ({ ...f, metric_id: data.id }));
+      setCreatorOpen(false);
+    } catch (e) {
+      alert(e?.response?.data?.message || "Ошибка создания метрики");
+    } finally {
+      setCreatorBusy(false);
+    }
+  };
+
+  // Доступные агрегации зависят от типа выбранного поля
+  const creatorField = creatorFields.find(
+    (f) => f.id === Number(creator.field_id)
+  );
+  const isNumericField =
+    creatorField && ["integer", "float"].includes(creatorField.data_type);
+  const allowedAggs = AGGREGATIONS.filter(
+    (a) => !a.numericOnly || isNumericField
+  );
 
   return (
     <Modal
@@ -330,23 +414,37 @@ function KpiEditorModal({ open, onClose, editingKpi, categories, onSaved }) {
           </Select>
         </div>
 
-        <div className="col-span-2 rounded-lg border border-slate-200 p-3">
-          <p className="mb-2 text-xs font-medium text-slate-700">
-            Источник фактического значения
-          </p>
+        {/* === Источник фактического значения === */}
+        <div className="col-span-2 space-y-3 rounded-lg border border-slate-200 p-3">
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-medium text-slate-700">
+              Источник фактического значения
+            </p>
+            {!creatorOpen && (
+              <button
+                type="button"
+                onClick={() => setCreatorOpen(true)}
+                className="text-xs font-medium text-blue-600 hover:text-blue-500"
+              >
+                + Создать метрику
+              </button>
+            )}
+          </div>
 
-          <Label>Метрика (для автоматического расчёта)</Label>
-          <Select value={form.metric_id} onChange={change("metric_id")}>
-            <option value="">— ручной ввод значения —</option>
-            {metrics.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.name} ({m.field_name})
-              </option>
-            ))}
-          </Select>
+          <div>
+            <Label>Метрика (для автоматического расчёта)</Label>
+            <Select value={form.metric_id} onChange={change("metric_id")}>
+              <option value="">— ручной ввод значения —</option>
+              {metrics.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.name} ({m.field_name})
+                </option>
+              ))}
+            </Select>
+          </div>
 
-          {!form.metric_id && (
-            <div className="mt-2">
+          {!form.metric_id && !creatorOpen && (
+            <div>
               <Label>Текущее значение (вручную)</Label>
               <Input
                 type="number"
@@ -354,6 +452,99 @@ function KpiEditorModal({ open, onClose, editingKpi, categories, onSaved }) {
                 value={form.manual_value}
                 onChange={change("manual_value")}
               />
+            </div>
+          )}
+
+          {/* Мини-конструктор метрики */}
+          {creatorOpen && (
+            <div className="space-y-2 rounded-lg bg-slate-50 p-3">
+              <p className="text-xs font-semibold text-slate-700">
+                Создание метрики
+              </p>
+
+              <div>
+                <Label>Набор данных</Label>
+                <Select
+                  value={creator.dataset_id}
+                  onChange={(e) =>
+                    setCreator({
+                      dataset_id: e.target.value,
+                      field_id: "",
+                      aggregation: "sum",
+                    })
+                  }
+                >
+                  <option value="">— выберите —</option>
+                  {datasets.map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {d.name}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+
+              {creator.dataset_id && (
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <Label>Поле</Label>
+                    <Select
+                      value={creator.field_id}
+                      onChange={(e) =>
+                        setCreator((c) => ({
+                          ...c,
+                          field_id: e.target.value,
+                          aggregation: "sum",
+                        }))
+                      }
+                    >
+                      <option value="">— выберите —</option>
+                      {creatorFields.map((f) => (
+                        <option key={f.id} value={f.id}>
+                          {f.name} [{f.data_type}]
+                        </option>
+                      ))}
+                    </Select>
+                  </div>
+
+                  <div>
+                    <Label>Агрегация</Label>
+                    <Select
+                      value={creator.aggregation}
+                      onChange={(e) =>
+                        setCreator((c) => ({
+                          ...c,
+                          aggregation: e.target.value,
+                        }))
+                      }
+                      disabled={!creator.field_id}
+                    >
+                      {allowedAggs.map((a) => (
+                        <option key={a.value} value={a.value}>
+                          {a.label}
+                        </option>
+                      ))}
+                    </Select>
+                  </div>
+                </div>
+              )}
+
+              <div className="flex justify-end gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setCreatorOpen(false)}
+                  className="rounded-md px-3 py-1.5 text-xs hover:bg-slate-200"
+                >
+                  Отмена
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCreateMetric}
+                  disabled={creatorBusy || !creator.field_id}
+                  className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+                >
+                  {creatorBusy ? "..." : "Создать и выбрать"}
+                </button>
+              </div>
             </div>
           )}
         </div>
@@ -503,7 +694,6 @@ function CategoriesModal({ open, onClose, categories, onChanged }) {
 }
 
 
-// ----- мелкие хелперы -----
 const Label = ({ children }) => (
   <label className="mb-1 block text-sm font-medium">{children}</label>
 );
