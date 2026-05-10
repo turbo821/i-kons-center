@@ -24,6 +24,8 @@ import {
   getWidgetData,
 } from "../api/widgetApi";
 
+import { useToast } from "../context/ToastContext";
+import { useConfirm } from "../context/ConfirmContext";
 import WidgetRenderer from "../components/WidgetRenderer";
 
 
@@ -61,6 +63,8 @@ const FILTER_OPERATORS = [
 export default function WidgetBuilderPage() {
   const { widgetId } = useParams();
   const navigate = useNavigate();
+  const toast = useToast();
+  const confirm = useConfirm();
   const isEdit = !!widgetId;
 
   const [datasets, setDatasets] = useState([]);
@@ -88,13 +92,11 @@ export default function WidgetBuilderPage() {
   );
 
 
-  // ------- Загрузка датасетов -------
   useEffect(() => {
     listDatasets().then(({ data }) => setDatasets(data)).catch(() => {});
   }, []);
 
 
-  // ------- Загрузка существующего виджета (режим редактирования) -------
   useEffect(() => {
     if (!isEdit) return;
     (async () => {
@@ -113,16 +115,14 @@ export default function WidgetBuilderPage() {
           }))
         );
       } catch {
-        alert("Виджет не найден");
+        toast.error("Виджет не найден");
         navigate("/widgets");
       }
     })();
-  }, [isEdit, widgetId, navigate]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isEdit, widgetId]);
 
 
-  // ------- Автоматическая загрузка превью при открытии существующего виджета -------
-  // Реагирует только на смену savedWidgetId (= открытие другого виджета).
-  // При работе с конфигом превью не дёргается — для этого есть кнопка «Применить».
   useEffect(() => {
     if (!savedWidgetId) return;
 
@@ -131,24 +131,14 @@ export default function WidgetBuilderPage() {
     setPreviewError(null);
 
     getWidgetData(savedWidgetId)
-      .then(({ data }) => {
-        if (active) setPreviewData(data);
-      })
-      .catch((e) => {
-        if (active) setPreviewError(e?.response?.data?.message || "Ошибка");
-      })
-      .finally(() => {
-        if (active) setPreviewLoading(false);
-      });
+      .then(({ data }) => active && setPreviewData(data))
+      .catch((e) => active && setPreviewError(e?.response?.data?.message || "Ошибка"))
+      .finally(() => active && setPreviewLoading(false));
 
-    return () => {
-      active = false;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => { active = false; };
   }, [savedWidgetId]);
 
 
-  // ------- При смене датасета — подгружаем поля, метрики, измерения -------
   useEffect(() => {
     if (!datasetId) {
       setDatasetFields([]);
@@ -169,10 +159,9 @@ export default function WidgetBuilderPage() {
   }, [datasetId]);
 
 
-  // ------- Превью: сохраняем + загружаем данные -------
   const handlePreview = async () => {
     if (!datasetId) {
-      alert("Выберите датасет");
+      toast.error("Выберите датасет");
       return;
     }
     setPreviewLoading(true);
@@ -200,7 +189,9 @@ export default function WidgetBuilderPage() {
       const { data } = await getWidgetData(id);
       setPreviewData(data);
     } catch (e) {
-      setPreviewError(e?.response?.data?.message || "Ошибка");
+      const msg = e?.response?.data?.message || "Ошибка";
+      setPreviewError(msg);
+      toast.error(msg);
     } finally {
       setPreviewLoading(false);
     }
@@ -224,9 +215,10 @@ export default function WidgetBuilderPage() {
       } else {
         await createWidget(payload);
       }
+      toast.success("Виджет сохранён");
       navigate("/widgets");
     } catch (e) {
-      alert(e?.response?.data?.message || "Ошибка сохранения");
+      toast.error(e?.response?.data?.message || "Ошибка сохранения");
     } finally {
       setSaving(false);
     }
@@ -238,12 +230,19 @@ export default function WidgetBuilderPage() {
       navigate("/widgets");
       return;
     }
-    if (!window.confirm("Удалить виджет?")) return;
+    const ok = await confirm({
+      title: "Удалить виджет?",
+      body: `«${title}» будет удалён вместе со всеми размещениями на дашбордах.`,
+      confirmText: "Удалить",
+      danger: true,
+    });
+    if (!ok) return;
     try {
       await deleteWidget(savedWidgetId);
+      toast.success("Виджет удалён");
       navigate("/widgets");
     } catch (e) {
-      alert(e?.response?.data?.message || "Ошибка удаления");
+      toast.error(e?.response?.data?.message || "Ошибка удаления");
     }
   };
 
@@ -263,8 +262,9 @@ export default function WidgetBuilderPage() {
       setSelectedMetricIds((prev) =>
         prev.includes(data.id) ? prev : [...prev, data.id]
       );
+      toast.success("Метрика создана");
     } catch (e) {
-      alert(e?.response?.data?.message || "Ошибка");
+      toast.error(e?.response?.data?.message || "Ошибка");
     }
   };
 
@@ -283,8 +283,9 @@ export default function WidgetBuilderPage() {
       setSelectedDimensionIds((prev) =>
         prev.includes(data.id) ? prev : [...prev, data.id]
       );
+      toast.success("Измерение создано");
     } catch (e) {
-      alert(e?.response?.data?.message || "Ошибка");
+      toast.error(e?.response?.data?.message || "Ошибка");
     }
   };
 
@@ -321,7 +322,7 @@ export default function WidgetBuilderPage() {
           <button
             onClick={handleSaveAndExit}
             disabled={saving || !datasetId}
-            className="flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+            className="flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
           >
             <Save size={16} />
             {saving ? "Сохранение..." : "Сохранить"}
@@ -364,7 +365,7 @@ export default function WidgetBuilderPage() {
                     onClick={() => setType(t.value)}
                     className={`flex flex-col items-center gap-1 rounded-lg border p-2 text-xs transition ${
                       type === t.value
-                        ? "border-blue-600 bg-blue-50 text-blue-700"
+                        ? "border-slate-900 bg-slate-900 text-white"
                         : "border-slate-200 hover:bg-slate-50"
                     }`}
                   >
@@ -460,7 +461,7 @@ export default function WidgetBuilderPage() {
                     },
                   ])
                 }
-                className="mt-2 flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-500"
+                className="mt-2 flex items-center gap-1 text-xs font-medium text-slate-700 hover:text-slate-900"
               >
                 <Plus size={14} />
                 Добавить фильтр
@@ -597,7 +598,7 @@ function NewMetricForm({ fields, onCreate }) {
       <button
         type="submit"
         disabled={!fieldId}
-        className="w-full rounded-md bg-blue-600 px-2 py-1.5 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+        className="w-full rounded-md bg-slate-900 px-2 py-1.5 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-50"
       >
         Создать
       </button>
@@ -636,7 +637,7 @@ function NewDimensionForm({ fields, existing, onCreate }) {
       <button
         type="submit"
         disabled={!fieldId}
-        className="w-full rounded-md bg-blue-600 px-2 py-1.5 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+        className="w-full rounded-md bg-slate-900 px-2 py-1.5 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-50"
       >
         Создать
       </button>

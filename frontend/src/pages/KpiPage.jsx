@@ -3,7 +3,6 @@ import {
   Plus,
   Trash2,
   Pencil,
-  Filter as FilterIcon,
   FolderTree,
 } from "lucide-react";
 
@@ -22,8 +21,11 @@ import { listMetrics, createMetric } from "../api/metricApi";
 import { listDatasets, getDataset } from "../api/datasetApi";
 
 import { useAuth } from "../context/AuthContext";
+import { useToast } from "../context/ToastContext";
+import { useConfirm } from "../context/ConfirmContext";
 import Modal from "../components/Modal";
 import KpiCard from "../components/KpiCard";
+import ListToolbar, { applySort, matchesSearch } from "../components/ListToolbar";
 
 
 const AGGREGATIONS = [
@@ -35,17 +37,35 @@ const AGGREGATIONS = [
   { value: "count_distinct", label: "Уникальных", numericOnly: false },
 ];
 
+const SORT_OPTIONS = [
+  { value: "created_desc", label: "Сначала новые" },
+  { value: "created_asc", label: "Сначала старые" },
+  { value: "name_asc", label: "По имени А→Я" },
+  { value: "name_desc", label: "По имени Я→А" },
+];
+
+const SORT_MAP = {
+  created_desc: { field: "created_at", direction: "desc" },
+  created_asc: { field: "created_at", direction: "asc" },
+  name_asc: { field: "name", direction: "asc" },
+  name_desc: { field: "name", direction: "desc" },
+};
+
 
 export default function KpiPage() {
   const { user } = useAuth();
-  const canEdit = user?.roles?.some((r) =>
-    ["admin", "expert"].includes(r)
-  );
+  const toast = useToast();
+  const confirm = useConfirm();
+  const canEdit = user?.roles?.some((r) => ["admin", "expert"].includes(r));
 
   const [kpis, setKpis] = useState([]);
   const [categories, setCategories] = useState([]);
-  const [filterCategory, setFilterCategory] = useState(null);
   const [loading, setLoading] = useState(true);
+
+  const [search, setSearch] = useState("");
+  const [sort, setSort] = useState("created_desc");
+  const [filterCategory, setFilterCategory] = useState(null);
+  const [filterDirection, setFilterDirection] = useState(null);
 
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingKpi, setEditingKpi] = useState(null);
@@ -60,6 +80,8 @@ export default function KpiPage() {
       ]);
       setKpis(kpiRes.data);
       setCategories(catRes.data);
+    } catch (e) {
+      toast.error("Не удалось загрузить данные");
     } finally {
       setLoading(false);
     }
@@ -67,20 +89,33 @@ export default function KpiPage() {
 
   useEffect(() => {
     load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const filteredKpis = useMemo(() => {
-    if (!filterCategory) return kpis;
-    return kpis.filter((k) => k.category_id === filterCategory);
-  }, [kpis, filterCategory]);
+    let result = kpis;
+    if (filterCategory) result = result.filter((k) => k.category_id === filterCategory);
+    if (filterDirection) result = result.filter((k) => k.direction === filterDirection);
+    result = result.filter((k) =>
+      matchesSearch(k, search, ["name", "description", "category_name"])
+    );
+    return applySort(result, sort, SORT_MAP);
+  }, [kpis, search, sort, filterCategory, filterDirection]);
 
-  const handleDelete = async (id) => {
-    if (!window.confirm("Удалить KPI?")) return;
+  const handleDelete = async (kpi) => {
+    const ok = await confirm({
+      title: "Удалить KPI?",
+      body: `«${kpi.name}» будет удалён.`,
+      confirmText: "Удалить",
+      danger: true,
+    });
+    if (!ok) return;
     try {
-      await deleteKpi(id);
+      await deleteKpi(kpi.id);
+      toast.success("KPI удалён");
       load();
     } catch (e) {
-      alert(e?.response?.data?.message || "Ошибка");
+      toast.error(e?.response?.data?.message || "Ошибка");
     }
   };
 
@@ -115,7 +150,7 @@ export default function KpiPage() {
             </button>
             <button
               onClick={handleCreate}
-              className="flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500"
+              className="flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
             >
               <Plus size={16} />
               Создать KPI
@@ -124,44 +159,72 @@ export default function KpiPage() {
         )}
       </div>
 
+      <ListToolbar
+        search={search}
+        onSearchChange={setSearch}
+        searchPlaceholder="Поиск по имени и описанию..."
+        sortValue={sort}
+        onSortChange={setSort}
+        sortOptions={SORT_OPTIONS}
+      />
+
+      {/* Фильтр по категориям */}
       {categories.length > 0 && (
         <div className="flex flex-wrap items-center gap-2">
-          <FilterIcon size={14} className="text-slate-500" />
-          <button
+          <span className="text-xs font-medium text-slate-500">Категория:</span>
+          <FilterChip
+            active={filterCategory === null}
             onClick={() => setFilterCategory(null)}
-            className={`rounded-full px-3 py-1 text-xs font-medium ${
-              filterCategory === null
-                ? "bg-blue-600 text-white"
-                : "bg-slate-100 hover:bg-slate-200"
-            }`}
           >
             Все ({kpis.length})
-          </button>
+          </FilterChip>
           {categories.map((c) => {
             const count = kpis.filter((k) => k.category_id === c.id).length;
+            if (count === 0) return null;
             return (
-              <button
+              <FilterChip
                 key={c.id}
+                active={filterCategory === c.id}
                 onClick={() => setFilterCategory(c.id)}
-                className={`rounded-full px-3 py-1 text-xs font-medium ${
-                  filterCategory === c.id
-                    ? "bg-blue-600 text-white"
-                    : "bg-slate-100 hover:bg-slate-200"
-                }`}
               >
                 {c.name} ({count})
-              </button>
+              </FilterChip>
             );
           })}
         </div>
       )}
+
+      {/* Фильтр по направлению */}
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs font-medium text-slate-500">Направление:</span>
+        <FilterChip
+          active={filterDirection === null}
+          onClick={() => setFilterDirection(null)}
+        >
+          Все
+        </FilterChip>
+        <FilterChip
+          active={filterDirection === "higher_better"}
+          onClick={() => setFilterDirection("higher_better")}
+        >
+          ↑ Больше — лучше
+        </FilterChip>
+        <FilterChip
+          active={filterDirection === "lower_better"}
+          onClick={() => setFilterDirection("lower_better")}
+        >
+          ↓ Меньше — лучше
+        </FilterChip>
+      </div>
 
       {loading && <p className="text-slate-500">Загрузка...</p>}
 
       {!loading && filteredKpis.length === 0 && (
         <div className="rounded-2xl bg-white p-12 text-center shadow-sm">
           <p className="text-slate-600">
-            {filterCategory ? "В этой категории нет KPI" : "Пока нет показателей"}
+            {search || filterCategory || filterDirection
+              ? "Ничего не найдено"
+              : "Пока нет показателей"}
           </p>
         </div>
       )}
@@ -172,15 +235,15 @@ export default function KpiPage() {
             <KpiCard kpi={kpi} />
 
             {canEdit && (
-              <div className="absolute right-3 top-12 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+              <div className="absolute right-3 top-12 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
                 <button
                   onClick={() => handleEdit(kpi)}
-                  className="rounded-lg bg-white p-1.5 text-slate-500 shadow-sm hover:text-blue-600"
+                  className="rounded-lg bg-white p-1.5 text-slate-500 shadow-sm hover:text-slate-900"
                 >
                   <Pencil size={12} />
                 </button>
                 <button
-                  onClick={() => handleDelete(kpi.id)}
+                  onClick={() => handleDelete(kpi)}
                   className="rounded-lg bg-white p-1.5 text-slate-500 shadow-sm hover:text-red-600"
                 >
                   <Trash2 size={12} />
@@ -210,10 +273,24 @@ export default function KpiPage() {
 }
 
 
-// =====================================================================
-// Редактор KPI с возможностью создавать метрики «на лету»
-// =====================================================================
+function FilterChip({ active, onClick, children }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`rounded-full px-3 py-1 text-xs font-medium ${
+        active
+          ? "bg-slate-900 text-white"
+          : "bg-white text-slate-700 hover:bg-slate-100"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+
 function KpiEditorModal({ open, onClose, editingKpi, categories, onSaved }) {
+  const toast = useToast();
   const isEdit = !!editingKpi;
 
   const [form, setForm] = useState({
@@ -231,9 +308,7 @@ function KpiEditorModal({ open, onClose, editingKpi, categories, onSaved }) {
   const [metrics, setMetrics] = useState([]);
   const [datasets, setDatasets] = useState([]);
   const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState(null);
 
-  // ----- Состояние «создателя метрики» (мини-конструктор) -----
   const [creatorOpen, setCreatorOpen] = useState(false);
   const [creator, setCreator] = useState({
     dataset_id: "",
@@ -243,7 +318,6 @@ function KpiEditorModal({ open, onClose, editingKpi, categories, onSaved }) {
   const [creatorFields, setCreatorFields] = useState([]);
   const [creatorBusy, setCreatorBusy] = useState(false);
 
-  // Подгрузка справочников при открытии
   useEffect(() => {
     if (!open) return;
     Promise.all([listMetrics(), listDatasets()]).then(([mRes, dRes]) => {
@@ -276,13 +350,11 @@ function KpiEditorModal({ open, onClose, editingKpi, categories, onSaved }) {
         manual_value: "",
       });
     }
-    setErr(null);
     setCreatorOpen(false);
     setCreator({ dataset_id: "", field_id: "", aggregation: "sum" });
     setCreatorFields([]);
   }, [open, editingKpi]);
 
-  // При смене датасета в мини-конструкторе подгружаем поля
   useEffect(() => {
     if (!creator.dataset_id) {
       setCreatorFields([]);
@@ -300,7 +372,6 @@ function KpiEditorModal({ open, onClose, editingKpi, categories, onSaved }) {
   const submit = async (e) => {
     e.preventDefault();
     setBusy(true);
-    setErr(null);
 
     const payload = {
       name: form.name,
@@ -319,19 +390,20 @@ function KpiEditorModal({ open, onClose, editingKpi, categories, onSaved }) {
     try {
       if (isEdit) {
         await updateKpi(editingKpi.id, payload);
+        toast.success("KPI обновлён");
       } else {
         await createKpi(payload);
+        toast.success("KPI создан");
       }
       onClose();
       onSaved();
     } catch (e) {
-      setErr(e?.response?.data?.message || "Ошибка");
+      toast.error(e?.response?.data?.message || "Ошибка");
     } finally {
       setBusy(false);
     }
   };
 
-  // Создание метрики «на лету»
   const handleCreateMetric = async () => {
     if (!creator.field_id) return;
     const field = creatorFields.find((f) => f.id === Number(creator.field_id));
@@ -348,20 +420,19 @@ function KpiEditorModal({ open, onClose, editingKpi, categories, onSaved }) {
         aggregation_type: creator.aggregation,
       });
 
-      // Обновляем список и выбираем новую
       setMetrics((prev) =>
         prev.find((m) => m.id === data.id) ? prev : [...prev, data]
       );
       setForm((f) => ({ ...f, metric_id: data.id }));
       setCreatorOpen(false);
+      toast.success("Метрика создана и выбрана");
     } catch (e) {
-      alert(e?.response?.data?.message || "Ошибка создания метрики");
+      toast.error(e?.response?.data?.message || "Ошибка создания метрики");
     } finally {
       setCreatorBusy(false);
     }
   };
 
-  // Доступные агрегации зависят от типа выбранного поля
   const creatorField = creatorFields.find(
     (f) => f.id === Number(creator.field_id)
   );
@@ -414,7 +485,6 @@ function KpiEditorModal({ open, onClose, editingKpi, categories, onSaved }) {
           </Select>
         </div>
 
-        {/* === Источник фактического значения === */}
         <div className="col-span-2 space-y-3 rounded-lg border border-slate-200 p-3">
           <div className="flex items-center justify-between">
             <p className="text-xs font-medium text-slate-700">
@@ -424,7 +494,7 @@ function KpiEditorModal({ open, onClose, editingKpi, categories, onSaved }) {
               <button
                 type="button"
                 onClick={() => setCreatorOpen(true)}
-                className="text-xs font-medium text-blue-600 hover:text-blue-500"
+                className="text-xs font-medium text-slate-700 hover:text-slate-900"
               >
                 + Создать метрику
               </button>
@@ -455,7 +525,6 @@ function KpiEditorModal({ open, onClose, editingKpi, categories, onSaved }) {
             </div>
           )}
 
-          {/* Мини-конструктор метрики */}
           {creatorOpen && (
             <div className="space-y-2 rounded-lg bg-slate-50 p-3">
               <p className="text-xs font-semibold text-slate-700">
@@ -540,7 +609,7 @@ function KpiEditorModal({ open, onClose, editingKpi, categories, onSaved }) {
                   type="button"
                   onClick={handleCreateMetric}
                   disabled={creatorBusy || !creator.field_id}
-                  className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+                  className="rounded-md bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-50"
                 >
                   {creatorBusy ? "..." : "Создать и выбрать"}
                 </button>
@@ -577,8 +646,6 @@ function KpiEditorModal({ open, onClose, editingKpi, categories, onSaved }) {
           />
         </div>
 
-        {err && <p className="col-span-2 text-sm text-red-600">{err}</p>}
-
         <div className="col-span-2 flex justify-end gap-2 pt-2">
           <button
             type="button"
@@ -590,7 +657,7 @@ function KpiEditorModal({ open, onClose, editingKpi, categories, onSaved }) {
           <button
             type="submit"
             disabled={busy}
-            className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+            className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
           >
             {busy ? "Сохранение..." : isEdit ? "Сохранить" : "Создать"}
           </button>
@@ -601,10 +668,9 @@ function KpiEditorModal({ open, onClose, editingKpi, categories, onSaved }) {
 }
 
 
-// =====================================================================
-// Управление категориями
-// =====================================================================
 function CategoriesModal({ open, onClose, categories, onChanged }) {
+  const toast = useToast();
+  const confirm = useConfirm();
   const [newName, setNewName] = useState("");
   const [newDesc, setNewDesc] = useState("");
   const [busy, setBusy] = useState(false);
@@ -617,21 +683,29 @@ function CategoriesModal({ open, onClose, categories, onChanged }) {
       await createCategory({ name: newName, description: newDesc });
       setNewName("");
       setNewDesc("");
+      toast.success("Категория создана");
       onChanged();
     } catch (e) {
-      alert(e?.response?.data?.message || "Ошибка");
+      toast.error(e?.response?.data?.message || "Ошибка");
     } finally {
       setBusy(false);
     }
   };
 
-  const handleDelete = async (id) => {
-    if (!window.confirm("Удалить категорию?")) return;
+  const handleDelete = async (cat) => {
+    const ok = await confirm({
+      title: "Удалить категорию?",
+      body: `«${cat.name}» будет удалена.`,
+      confirmText: "Удалить",
+      danger: true,
+    });
+    if (!ok) return;
     try {
-      await deleteCategory(id);
+      await deleteCategory(cat.id);
+      toast.success("Категория удалена");
       onChanged();
     } catch (e) {
-      alert(e?.response?.data?.message || "Ошибка");
+      toast.error(e?.response?.data?.message || "Ошибка");
     }
   };
 
@@ -658,7 +732,7 @@ function CategoriesModal({ open, onClose, categories, onChanged }) {
           <button
             type="submit"
             disabled={busy || !newName}
-            className="w-full rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+            className="w-full rounded-lg bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
           >
             Добавить
           </button>
@@ -680,7 +754,7 @@ function CategoriesModal({ open, onClose, categories, onChanged }) {
                 )}
               </div>
               <button
-                onClick={() => handleDelete(c.id)}
+                onClick={() => handleDelete(c)}
                 className="rounded-lg p-1.5 text-red-600 hover:bg-red-50"
               >
                 <Trash2 size={14} />

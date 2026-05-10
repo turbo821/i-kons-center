@@ -1,13 +1,18 @@
 from flask import Blueprint, request, jsonify
-from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identity, get_jwt
+from flask_jwt_extended import (
+    create_access_token,
+    jwt_required,
+    get_jwt_identity,
+    get_jwt,
+)
 from app.database.db import db
 from app.models.user import User
 from app.models.role import Role
-from app.auth.decorators import role_required
 
 import bcrypt
 
 auth_bp = Blueprint('auth', __name__, url_prefix='/api/auth')
+
 
 @auth_bp.route("/register", methods=["POST"])
 def register():
@@ -15,9 +20,10 @@ def register():
     username = data["username"]
     email = data["email"]
     password = data["password"]
+
     existing_user = User.query.filter_by(email=email).first()
     if existing_user:
-        return jsonify({"message": "User already exists"}), 400
+        return jsonify({"message": "Пользователь с таким email уже существует"}), 400
 
     password_hash = bcrypt.hashpw(
         password.encode("utf-8"),
@@ -36,7 +42,8 @@ def register():
     db.session.add(user)
     db.session.commit()
 
-    return jsonify({"message": "User created"})
+    return jsonify({"message": "Пользователь создан"})
+
 
 @auth_bp.route("/login", methods=["POST"])
 def login():
@@ -46,7 +53,10 @@ def login():
     user = User.query.filter_by(email=email).first()
 
     if not user:
-        return jsonify({"message": "Invalid credentials"}), 401
+        return jsonify({"message": "Неверный email или пароль"}), 401
+
+    if user.status == "blocked":
+        return jsonify({"message": "Учётная запись заблокирована"}), 403
 
     valid = bcrypt.checkpw(
         password.encode("utf-8"),
@@ -54,7 +64,7 @@ def login():
     )
 
     if not valid:
-        return jsonify({"message": "Invalid credentials"}), 401
+        return jsonify({"message": "Неверный email или пароль"}), 401
 
     token = create_access_token(
         identity=str(user.id),
@@ -74,14 +84,71 @@ def login():
         }
     })
 
+
 @auth_bp.route("/me", methods=["GET"])
 @jwt_required()
 def me():
     user_id = get_jwt_identity()
     claims = get_jwt()
 
+    # Также возвращаем username — для отображения в Header
+    user = db.session.get(User, int(user_id))
     return jsonify({
         "id": user_id,
+        "username": user.username if user else None,
         "email": claims["email"],
-        "roles": claims["roles"]
+        "roles": claims["roles"],
+        "created_at": user.created_at.isoformat() if user and user.created_at else None,
     })
+
+
+@auth_bp.route("/me/password", methods=["PUT"])
+@jwt_required()
+def change_password():
+    """Смена пароля текущим пользователем.
+    Body: {"current_password": "...", "new_password": "..."}
+    """
+    user_id = int(get_jwt_identity())
+    user = db.session.get(User, user_id)
+    if user is None:
+        return jsonify({"message": "Пользователь не найден"}), 404
+
+    data = request.json or {}
+    current_password = data.get("current_password", "")
+    new_password = data.get("new_password", "")
+
+    if not current_password or not new_password:
+        return jsonify({
+            "message": "Укажите текущий и новый пароль"
+        }), 400
+
+    if len(new_password) < 6:
+        return jsonify({
+            "message": "Новый пароль должен содержать минимум 6 символов"
+        }), 400
+
+    valid = bcrypt.checkpw(
+        current_password.encode("utf-8"),
+        user.password_hash.encode("utf-8")
+    )
+    if not valid:
+        return jsonify({"message": "Текущий пароль введён неверно"}), 401
+
+    user.password_hash = bcrypt.hashpw(
+        new_password.encode("utf-8"),
+        bcrypt.gensalt()
+    ).decode("utf-8")
+
+    db.session.commit()
+    return jsonify({"message": "Пароль изменён"})
+
+
+@auth_bp.route("/roles", methods=["GET"])
+@jwt_required()
+def list_roles():
+    """Список всех ролей — нужен на странице управления пользователями."""
+    items = db.session.query(Role).order_by(Role.name).all()
+    return jsonify([
+        {"id": r.id, "name": r.name, "description": r.description}
+        for r in items
+    ])

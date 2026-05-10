@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { Plus, LayoutDashboard, Trash2 } from "lucide-react";
 
@@ -9,24 +9,47 @@ import {
 } from "../api/dashboardApi";
 
 import { useAuth } from "../context/AuthContext";
+import { useToast } from "../context/ToastContext";
+import { useConfirm } from "../context/ConfirmContext";
 import Modal from "../components/Modal";
+import ListToolbar, { applySort, matchesSearch } from "../components/ListToolbar";
+
+
+const SORT_OPTIONS = [
+  { value: "created_desc", label: "Сначала новые" },
+  { value: "created_asc", label: "Сначала старые" },
+  { value: "name_asc", label: "По имени А→Я" },
+  { value: "name_desc", label: "По имени Я→А" },
+];
+
+const SORT_MAP = {
+  created_desc: { field: "created_at", direction: "desc" },
+  created_asc: { field: "created_at", direction: "asc" },
+  name_asc: { field: "name", direction: "asc" },
+  name_desc: { field: "name", direction: "desc" },
+};
 
 
 export default function DashboardsPage() {
   const { user } = useAuth();
-  const canEdit = user?.roles?.some((r) =>
-    ["admin", "expert"].includes(r)
-  );
+  const toast = useToast();
+  const confirm = useConfirm();
+  const canEdit = user?.roles?.some((r) => ["admin", "expert"].includes(r));
 
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [createOpen, setCreateOpen] = useState(false);
+
+  const [search, setSearch] = useState("");
+  const [sort, setSort] = useState("created_desc");
 
   const load = async () => {
     setLoading(true);
     try {
       const { data } = await listDashboards();
       setItems(data);
+    } catch (e) {
+      toast.error("Не удалось загрузить дашборды");
     } finally {
       setLoading(false);
     }
@@ -34,15 +57,30 @@ export default function DashboardsPage() {
 
   useEffect(() => {
     load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleDelete = async (id) => {
-    if (!window.confirm("Удалить дашборд?")) return;
+  const filtered = useMemo(() => {
+    let result = items.filter((i) =>
+      matchesSearch(i, search, ["name", "description"])
+    );
+    return applySort(result, sort, SORT_MAP);
+  }, [items, search, sort]);
+
+  const handleDelete = async (dashboard) => {
+    const ok = await confirm({
+      title: "Удалить дашборд?",
+      body: `«${dashboard.name}» будет удалён со всеми размещениями.`,
+      confirmText: "Удалить",
+      danger: true,
+    });
+    if (!ok) return;
     try {
-      await deleteDashboard(id);
+      await deleteDashboard(dashboard.id);
+      toast.success("Дашборд удалён");
       load();
     } catch (e) {
-      alert(e?.response?.data?.message || "Ошибка");
+      toast.error(e?.response?.data?.message || "Ошибка");
     }
   };
 
@@ -57,7 +95,7 @@ export default function DashboardsPage() {
         {canEdit && (
           <button
             onClick={() => setCreateOpen(true)}
-            className="flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500"
+            className="flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
           >
             <Plus size={18} />
             Создать дашборд
@@ -65,25 +103,36 @@ export default function DashboardsPage() {
         )}
       </div>
 
+      <ListToolbar
+        search={search}
+        onSearchChange={setSearch}
+        searchPlaceholder="Поиск по названию и описанию..."
+        sortValue={sort}
+        onSortChange={setSort}
+        sortOptions={SORT_OPTIONS}
+      />
+
       {loading && <p className="text-slate-500">Загрузка...</p>}
 
-      {!loading && items.length === 0 && (
+      {!loading && filtered.length === 0 && (
         <div className="rounded-2xl bg-white p-12 text-center shadow-sm">
           <LayoutDashboard className="mx-auto mb-4 text-slate-400" size={48} />
-          <p className="text-slate-600">Пока нет дашбордов</p>
+          <p className="text-slate-600">
+            {search ? "Ничего не найдено" : "Пока нет дашбордов"}
+          </p>
         </div>
       )}
 
-      {items.length > 0 && (
+      {filtered.length > 0 && (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {items.map((item) => (
+          {filtered.map((item) => (
             <div
               key={item.id}
               className="rounded-2xl bg-white p-5 shadow-sm transition hover:shadow-md"
             >
               <Link to={`/dashboards/${item.id}`} className="block">
                 <div className="mb-3 flex items-start gap-3">
-                  <div className="rounded-xl bg-blue-50 p-2 text-blue-600">
+                  <div className="rounded-xl bg-slate-100 p-2 text-slate-700">
                     <LayoutDashboard size={22} />
                   </div>
                   <div className="flex-1 overflow-hidden">
@@ -103,7 +152,7 @@ export default function DashboardsPage() {
                 </span>
                 {canEdit && (
                   <button
-                    onClick={() => handleDelete(item.id)}
+                    onClick={() => handleDelete(item)}
                     className="rounded-lg p-1.5 text-red-600 hover:bg-red-50"
                   >
                     <Trash2 size={14} />
@@ -126,21 +175,21 @@ export default function DashboardsPage() {
 
 
 function CreateDashboardModal({ open, onClose, onCreated }) {
+  const toast = useToast();
   const [form, setForm] = useState({ name: "", description: "" });
   const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState(null);
 
   const submit = async (e) => {
     e.preventDefault();
     setBusy(true);
-    setErr(null);
     try {
       await createDashboard(form);
+      toast.success("Дашборд создан");
       setForm({ name: "", description: "" });
       onClose();
       onCreated();
     } catch (e) {
-      setErr(e?.response?.data?.message || "Ошибка");
+      toast.error(e?.response?.data?.message || "Ошибка");
     } finally {
       setBusy(false);
     }
@@ -174,8 +223,6 @@ function CreateDashboardModal({ open, onClose, onCreated }) {
           />
         </div>
 
-        {err && <p className="text-sm text-red-600">{err}</p>}
-
         <div className="flex justify-end gap-2 pt-2">
           <button
             type="button"
@@ -187,7 +234,7 @@ function CreateDashboardModal({ open, onClose, onCreated }) {
           <button
             type="submit"
             disabled={busy}
-            className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+            className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
           >
             {busy ? "Создание..." : "Создать"}
           </button>

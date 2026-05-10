@@ -2,23 +2,20 @@ import { useState } from "react";
 
 import Header from "./Header";
 import Sidebar from "./Sidebar";
+import { useAuth } from "../context/AuthContext";
+
 
 export default function AppLayout({ children }) {
   const [collapsed, setCollapsed] = useState(false);
+  const { user } = useAuth();
 
   return (
     <div className="flex min-h-screen bg-slate-100">
-      <Sidebar
-        collapsed={collapsed}
-        setCollapsed={setCollapsed}
-      />
+      {user && <Sidebar collapsed={collapsed} setCollapsed={setCollapsed} />}
 
       <div className="flex flex-1 flex-col">
-        <Header collapsed={collapsed} />
-
-        <main className="flex-1 p-6 overflow-auto">
-          {children}
-        </main>
+        <Header />
+        <main className="flex-1 overflow-auto p-6">{children}</main>
       </div>
     </div>
   );

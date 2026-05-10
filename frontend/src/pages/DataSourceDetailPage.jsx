@@ -19,15 +19,17 @@ import {
 } from "../api/datasetApi";
 
 import { useAuth } from "../context/AuthContext";
+import { useToast } from "../context/ToastContext";
+import { useConfirm } from "../context/ConfirmContext";
 import Modal from "../components/Modal";
 
 
 export default function DataSourceDetailPage() {
   const { id } = useParams();
   const { user } = useAuth();
-  const canEdit = user?.roles?.some((r) =>
-    ["admin", "expert"].includes(r)
-  );
+  const toast = useToast();
+  const confirm = useConfirm();
+  const canEdit = user?.roles?.some((r) => ["admin", "expert"].includes(r));
 
   const [datasource, setDatasource] = useState(null);
   const [datasets, setDatasets] = useState([]);
@@ -44,6 +46,8 @@ export default function DataSourceDetailPage() {
       ]);
       setDatasource(dsRes.data);
       setDatasets(dsetsRes.data);
+    } catch (e) {
+      toast.error("Не удалось загрузить данные");
     } finally {
       setLoading(false);
     }
@@ -51,24 +55,33 @@ export default function DataSourceDetailPage() {
 
   useEffect(() => {
     load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
-  const handleDelete = async (datasetId) => {
-    if (!window.confirm("Удалить набор данных?")) return;
+  const handleDelete = async (dataset) => {
+    const ok = await confirm({
+      title: "Удалить набор данных?",
+      body: `«${dataset.name}» будет удалён.`,
+      confirmText: "Удалить",
+      danger: true,
+    });
+    if (!ok) return;
     try {
-      await deleteDataset(datasetId);
+      await deleteDataset(dataset.id);
+      toast.success("Набор данных удалён");
       load();
     } catch (e) {
-      alert(e?.response?.data?.message || "Ошибка");
+      toast.error(e?.response?.data?.message || "Ошибка");
     }
   };
 
   const handleRefresh = async (datasetId) => {
     try {
       await refreshDatasetFields(datasetId);
+      toast.success("Поля обновлены");
       load();
     } catch (e) {
-      alert(e?.response?.data?.message || "Ошибка");
+      toast.error(e?.response?.data?.message || "Ошибка");
     }
   };
 
@@ -77,7 +90,7 @@ export default function DataSourceDetailPage() {
       const { data } = await previewDataset(datasetId, 50);
       setPreviewState({ ...data, name });
     } catch (e) {
-      alert(e?.response?.data?.message || "Ошибка предпросмотра");
+      toast.error(e?.response?.data?.message || "Ошибка предпросмотра");
     }
   };
 
@@ -89,7 +102,7 @@ export default function DataSourceDetailPage() {
       <div>
         <Link
           to="/datasources"
-          className="mb-3 inline-flex items-center gap-1 text-sm text-slate-600 hover:text-blue-600"
+          className="mb-3 inline-flex items-center gap-1 text-sm text-slate-600 hover:text-slate-900"
         >
           <ArrowLeft size={16} />К списку источников
         </Link>
@@ -105,7 +118,7 @@ export default function DataSourceDetailPage() {
           {canEdit && (
             <button
               onClick={() => setCreateOpen(true)}
-              className="flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500"
+              className="flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
             >
               <Plus size={18} />
               Создать набор данных
@@ -132,7 +145,7 @@ export default function DataSourceDetailPage() {
                 className="flex items-center justify-between rounded-xl border border-slate-200 p-4"
               >
                 <div className="flex items-center gap-3">
-                  <Table2 className="text-blue-600" size={20} />
+                  <Table2 className="text-slate-700" size={20} />
                   <div>
                     <p className="font-medium">{ds.name}</p>
                     {ds.query && (
@@ -162,7 +175,7 @@ export default function DataSourceDetailPage() {
                         Обновить поля
                       </button>
                       <button
-                        onClick={() => handleDelete(ds.id)}
+                        onClick={() => handleDelete(ds)}
                         className="flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50"
                       >
                         <Trash2 size={12} />
@@ -192,20 +205,18 @@ export default function DataSourceDetailPage() {
 }
 
 
-// --------------- модалка создания датасета ---------------
 function CreateDatasetModal({ open, onClose, datasource, onCreated }) {
+  const toast = useToast();
   const isCsv = datasource.type === "csv";
 
   const [form, setForm] = useState({ name: "", table_name: "", query: "" });
   const [tables, setTables] = useState([]);
-  const [mode, setMode] = useState("table"); // 'table' | 'query'
+  const [mode, setMode] = useState("table");
   const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState(null);
 
   useEffect(() => {
     if (!open) return;
     setForm({ name: "", table_name: "", query: "" });
-    setErr(null);
 
     if (!isCsv) {
       listDataSourceTables(datasource.id)
@@ -217,7 +228,6 @@ function CreateDatasetModal({ open, onClose, datasource, onCreated }) {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setBusy(true);
-    setErr(null);
 
     const payload = {
       datasource_id: datasource.id,
@@ -231,10 +241,11 @@ function CreateDatasetModal({ open, onClose, datasource, onCreated }) {
 
     try {
       await createDataset(payload);
+      toast.success("Набор данных создан");
       onClose();
       onCreated();
     } catch (e) {
-      setErr(e?.response?.data?.message || "Ошибка создания");
+      toast.error(e?.response?.data?.message || "Ошибка создания");
     } finally {
       setBusy(false);
     }
@@ -260,7 +271,7 @@ function CreateDatasetModal({ open, onClose, datasource, onCreated }) {
         </div>
 
         {isCsv ? (
-          <p className="rounded-lg bg-blue-50 p-3 text-sm text-blue-900">
+          <p className="rounded-lg bg-slate-50 p-3 text-sm text-slate-700">
             Для файлового источника поля будут определены автоматически
             из всего содержимого файла.
           </p>
@@ -272,7 +283,7 @@ function CreateDatasetModal({ open, onClose, datasource, onCreated }) {
                 onClick={() => setMode("table")}
                 className={`flex-1 rounded-lg px-3 py-2 text-sm font-medium ${
                   mode === "table"
-                    ? "bg-blue-600 text-white"
+                    ? "bg-slate-900 text-white"
                     : "bg-slate-100 hover:bg-slate-200"
                 }`}
               >
@@ -283,7 +294,7 @@ function CreateDatasetModal({ open, onClose, datasource, onCreated }) {
                 onClick={() => setMode("query")}
                 className={`flex-1 rounded-lg px-3 py-2 text-sm font-medium ${
                   mode === "query"
-                    ? "bg-blue-600 text-white"
+                    ? "bg-slate-900 text-white"
                     : "bg-slate-100 hover:bg-slate-200"
                 }`}
               >
@@ -293,9 +304,7 @@ function CreateDatasetModal({ open, onClose, datasource, onCreated }) {
 
             {mode === "table" ? (
               <div>
-                <label className="mb-1 block text-sm font-medium">
-                  Таблица
-                </label>
+                <label className="mb-1 block text-sm font-medium">Таблица</label>
                 <select
                   value={form.table_name}
                   onChange={(e) =>
@@ -314,9 +323,7 @@ function CreateDatasetModal({ open, onClose, datasource, onCreated }) {
               </div>
             ) : (
               <div>
-                <label className="mb-1 block text-sm font-medium">
-                  SQL-запрос
-                </label>
+                <label className="mb-1 block text-sm font-medium">SQL-запрос</label>
                 <textarea
                   rows={6}
                   value={form.query}
@@ -332,8 +339,6 @@ function CreateDatasetModal({ open, onClose, datasource, onCreated }) {
           </>
         )}
 
-        {err && <p className="text-sm text-red-600">{err}</p>}
-
         <div className="flex justify-end gap-2 pt-2">
           <button
             type="button"
@@ -345,7 +350,7 @@ function CreateDatasetModal({ open, onClose, datasource, onCreated }) {
           <button
             type="submit"
             disabled={busy}
-            className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+            className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
           >
             {busy ? "Создание..." : "Создать"}
           </button>
@@ -356,7 +361,6 @@ function CreateDatasetModal({ open, onClose, datasource, onCreated }) {
 }
 
 
-// --------------- модалка предпросмотра ---------------
 function PreviewModal({ state, onClose }) {
   if (!state) return null;
 

@@ -29,6 +29,8 @@ import {
 } from "../api/kpiApi";
 
 import { useAuth } from "../context/AuthContext";
+import { useToast } from "../context/ToastContext";
+import { useConfirm } from "../context/ConfirmContext";
 import WidgetRenderer from "../components/WidgetRenderer";
 import KpiCard from "../components/KpiCard";
 import Modal from "../components/Modal";
@@ -36,8 +38,6 @@ import Modal from "../components/Modal";
 
 const GRID_COLS = 12;
 const ROW_HEIGHT = 60;
-
-// Префиксы ключей сетки — чтобы виджеты и KPI не пересекались по id
 const KEY_WIDGET = "w";
 const KEY_KPI = "k";
 
@@ -45,9 +45,9 @@ const KEY_KPI = "k";
 export default function DashboardDetailPage() {
   const { id } = useParams();
   const { user } = useAuth();
-  const canEdit = user?.roles?.some((r) =>
-    ["admin", "expert"].includes(r)
-  );
+  const toast = useToast();
+  const confirm = useConfirm();
+  const canEdit = user?.roles?.some((r) => ["admin", "expert"].includes(r));
 
   const [dashboard, setDashboard] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -63,9 +63,12 @@ export default function DashboardDetailPage() {
     try {
       const { data } = await getDashboard(id);
       setDashboard(data);
+    } catch (e) {
+      toast.error("Не удалось загрузить дашборд");
     } finally {
       setLoading(false);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   useEffect(() => {
@@ -85,10 +88,8 @@ export default function DashboardDetailPage() {
     return () => observer.disconnect();
   }, [dashboard]);
 
-  // Все элементы дашборда — единый массив с полем kind
   const items = dashboard?.items || [];
 
-  // Layout для GridLayout: ключ = kind_refId, например "w_42" или "k_15"
   const layout = useMemo(() => {
     return items.map((item) => ({
       i: `${item.kind === "kpi" ? KEY_KPI : KEY_WIDGET}_${item.ref_id}`,
@@ -104,7 +105,6 @@ export default function DashboardDetailPage() {
   const handleLayoutChange = async (newLayout) => {
     if (!editMode || !dashboard) return;
 
-    // Парсим ключи обратно в {kind, ref_id}
     const payload = newLayout.map((l) => {
       const [prefix, refIdStr] = l.i.split("_");
       return {
@@ -117,7 +117,6 @@ export default function DashboardDetailPage() {
       };
     });
 
-    // Оптимистичное обновление локального state
     setDashboard((prev) => ({
       ...prev,
       items: prev.items.map((it) => {
@@ -138,27 +137,41 @@ export default function DashboardDetailPage() {
     try {
       await updateDashboardLayout(id, payload);
     } catch (e) {
-      console.error("Не удалось сохранить layout:", e);
+      toast.error("Не удалось сохранить расположение");
     }
   };
 
-  const handleRemoveWidget = async (widgetId) => {
-    if (!window.confirm("Убрать виджет с дашборда?")) return;
+  const handleRemoveWidget = async (widgetId, title) => {
+    const ok = await confirm({
+      title: "Убрать виджет?",
+      body: `«${title}» будет убран с этого дашборда (сам виджет останется в системе).`,
+      confirmText: "Убрать",
+      danger: false,
+    });
+    if (!ok) return;
     try {
       await removeWidgetFromDashboard(id, widgetId);
+      toast.success("Виджет убран");
       load();
     } catch (e) {
-      alert(e?.response?.data?.message || "Ошибка");
+      toast.error(e?.response?.data?.message || "Ошибка");
     }
   };
 
-  const handleRemoveKpi = async (kpiId) => {
-    if (!window.confirm("Убрать KPI с дашборда?")) return;
+  const handleRemoveKpi = async (kpiId, name) => {
+    const ok = await confirm({
+      title: "Убрать KPI?",
+      body: `«${name}» будет убран с этого дашборда (сам KPI останется в системе).`,
+      confirmText: "Убрать",
+      danger: false,
+    });
+    if (!ok) return;
     try {
       await removeKpiFromDashboard(id, kpiId);
+      toast.success("KPI убран");
       load();
     } catch (e) {
-      alert(e?.response?.data?.message || "Ошибка");
+      toast.error(e?.response?.data?.message || "Ошибка");
     }
   };
 
@@ -167,7 +180,6 @@ export default function DashboardDetailPage() {
 
   return (
     <div className="space-y-4">
-      {/* Шапка */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <Link to="/dashboards" className="rounded-lg p-2 hover:bg-slate-100">
@@ -177,7 +189,7 @@ export default function DashboardDetailPage() {
           <div>
             <h1 className="flex items-center gap-2 text-2xl font-bold">
               {dashboard.name}
-              {canEdit && (
+              {canEdit && editMode && (
                 <button
                   onClick={() => setEditMetaOpen(true)}
                   className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
@@ -194,26 +206,30 @@ export default function DashboardDetailPage() {
 
         {canEdit && (
           <div className="flex gap-2">
-            <button
-              onClick={() => setAddKpiOpen(true)}
-              className="flex items-center gap-2 rounded-xl bg-slate-100 px-4 py-2 text-sm font-medium hover:bg-slate-200"
-            >
-              <Target size={16} />
-              Добавить KPI
-            </button>
-            <button
-              onClick={() => setAddWidgetOpen(true)}
-              className="flex items-center gap-2 rounded-xl bg-slate-100 px-4 py-2 text-sm font-medium hover:bg-slate-200"
-            >
-              <Plus size={16} />
-              Добавить виджет
-            </button>
+            {editMode && (
+              <>
+                <button
+                  onClick={() => setAddKpiOpen(true)}
+                  className="flex items-center gap-2 rounded-xl bg-slate-100 px-4 py-2 text-sm font-medium hover:bg-slate-200"
+                >
+                  <Target size={16} />
+                  Добавить KPI
+                </button>
+                <button
+                  onClick={() => setAddWidgetOpen(true)}
+                  className="flex items-center gap-2 rounded-xl bg-slate-100 px-4 py-2 text-sm font-medium hover:bg-slate-200"
+                >
+                  <Plus size={16} />
+                  Добавить виджет
+                </button>
+              </>
+            )}
             <button
               onClick={() => setEditMode((m) => !m)}
               className={`flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-medium ${
                 editMode
-                  ? "bg-green-600 text-white hover:bg-green-500"
-                  : "bg-blue-600 text-white hover:bg-blue-500"
+                  ? "bg-emerald-600 text-white hover:bg-emerald-500"
+                  : "bg-slate-900 text-white hover:bg-slate-800"
               }`}
             >
               {editMode ? <Save size={16} /> : <Edit3 size={16} />}
@@ -224,20 +240,19 @@ export default function DashboardDetailPage() {
       </div>
 
       {editMode && (
-        <div className="rounded-xl bg-blue-50 px-4 py-3 text-sm text-blue-900">
-          Режим редактирования: перетаскивайте виджеты и KPI за заголовок,
+        <div className="rounded-xl bg-slate-100 px-4 py-3 text-sm text-slate-700">
+          Режим редактирования: перетаскивайте элементы за заголовок,
           меняйте размер. Изменения сохраняются автоматически.
         </div>
       )}
 
-      {/* Единая сетка */}
       <div id="grid-container" className="rounded-2xl bg-white p-3 shadow-sm">
         {items.length === 0 ? (
           <div className="py-16 text-center">
             <p className="text-slate-500">На дашборде пока нет элементов</p>
-            {canEdit && (
+            {canEdit && !editMode && (
               <p className="mt-3 text-sm text-slate-500">
-                Добавьте виджет или KPI с помощью кнопок выше
+                Нажмите «Редактировать», чтобы добавить виджеты и KPI
               </p>
             )}
           </div>
@@ -267,14 +282,16 @@ export default function DashboardDetailPage() {
                       item={item}
                       editMode={editMode}
                       canEdit={canEdit}
-                      onRemove={() => handleRemoveWidget(item.ref_id)}
+                      onRemove={() =>
+                        handleRemoveWidget(item.ref_id, item.title)
+                      }
                     />
                   ) : (
                     <KpiTile
                       item={item}
                       editMode={editMode}
                       canEdit={canEdit}
-                      onRemove={() => handleRemoveKpi(item.ref_id)}
+                      onRemove={() => handleRemoveKpi(item.ref_id, item.name)}
                     />
                   )}
                 </div>
@@ -288,9 +305,7 @@ export default function DashboardDetailPage() {
         open={addWidgetOpen}
         onClose={() => setAddWidgetOpen(false)}
         dashboardId={id}
-        existingWidgetIds={items
-          .filter((i) => i.kind === "widget")
-          .map((i) => i.ref_id)}
+        existingWidgetIds={items.filter((i) => i.kind === "widget").map((i) => i.ref_id)}
         onAdded={load}
       />
 
@@ -298,9 +313,7 @@ export default function DashboardDetailPage() {
         open={addKpiOpen}
         onClose={() => setAddKpiOpen(false)}
         dashboardId={id}
-        existingKpiIds={items
-          .filter((i) => i.kind === "kpi")
-          .map((i) => i.ref_id)}
+        existingKpiIds={items.filter((i) => i.kind === "kpi").map((i) => i.ref_id)}
         onAdded={load}
       />
 
@@ -315,7 +328,6 @@ export default function DashboardDetailPage() {
 }
 
 
-// ===== плитка виджета =====
 function WidgetTile({ item, editMode, canEdit, onRemove }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
@@ -327,9 +339,7 @@ function WidgetTile({ item, editMode, canEdit, onRemove }) {
       .then(({ data }) => active && setData(data))
       .catch((e) => active && setError(e?.response?.data?.message || "Ошибка"))
       .finally(() => active && setLoading(false));
-    return () => {
-      active = false;
-    };
+    return () => { active = false; };
   }, [item.ref_id]);
 
   const stopDrag = (e) => e.stopPropagation();
@@ -343,14 +353,16 @@ function WidgetTile({ item, editMode, canEdit, onRemove }) {
       >
         <div className="flex flex-1 items-center gap-2 overflow-hidden">
           <p className="truncate text-sm font-semibold">{item.title}</p>
-          <Link
-            to={`/widgets/${item.ref_id}/edit`}
-            onMouseDown={stopDrag}
-            onClick={(e) => e.stopPropagation()}
-            className="no-drag rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
-          >
-            <Pencil size={12} />
-          </Link>
+          {editMode && (
+            <Link
+              to={`/widgets/${item.ref_id}/edit`}
+              onMouseDown={stopDrag}
+              onClick={(e) => e.stopPropagation()}
+              className="no-drag rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+            >
+              <Pencil size={12} />
+            </Link>
+          )}
         </div>
 
         {editMode && canEdit && (
@@ -380,11 +392,7 @@ function WidgetTile({ item, editMode, canEdit, onRemove }) {
 }
 
 
-// ===== плитка KPI =====
 function KpiTile({ item, editMode, canEdit, onRemove }) {
-  // item уже содержит все поля KPI (см. to_dict в Dashboard)
-  // Передаём его как объект kpi в KpiCard. Но id в KpiCard ожидает поле id,
-  // а у нас в едином items это ref_id — нормализуем.
   const kpi = { ...item, id: item.ref_id };
 
   return (
@@ -412,14 +420,8 @@ function KpiTile({ item, editMode, canEdit, onRemove }) {
 }
 
 
-// ===== модалка добавления виджета =====
-function AddWidgetModal({
-  open,
-  onClose,
-  dashboardId,
-  existingWidgetIds,
-  onAdded,
-}) {
+function AddWidgetModal({ open, onClose, dashboardId, existingWidgetIds, onAdded }) {
+  const toast = useToast();
   const [allWidgets, setAllWidgets] = useState([]);
   const [busy, setBusy] = useState(false);
 
@@ -442,22 +444,18 @@ function AddWidgetModal({
         width: 6,
         height: 4,
       });
+      toast.success("Виджет добавлен");
       onClose();
       onAdded();
     } catch (e) {
-      alert(e?.response?.data?.message || "Ошибка");
+      toast.error(e?.response?.data?.message || "Ошибка");
     } finally {
       setBusy(false);
     }
   };
 
   return (
-    <Modal
-      open={open}
-      onClose={onClose}
-      title="Добавить виджет"
-      maxWidth="max-w-2xl"
-    >
+    <Modal open={open} onClose={onClose} title="Добавить виджет" maxWidth="max-w-2xl">
       {available.length === 0 ? (
         <p className="py-6 text-center text-sm text-slate-500">
           Нет доступных виджетов.
@@ -473,7 +471,7 @@ function AddWidgetModal({
               key={w.id}
               onClick={() => handleAdd(w.id)}
               disabled={busy}
-              className="flex w-full items-center justify-between rounded-lg border border-slate-200 p-3 text-left hover:border-blue-500 hover:bg-blue-50 disabled:opacity-50"
+              className="flex w-full items-center justify-between rounded-lg border border-slate-200 p-3 text-left hover:border-slate-400 hover:bg-slate-50 disabled:opacity-50"
             >
               <div>
                 <p className="font-medium">{w.title}</p>
@@ -481,7 +479,7 @@ function AddWidgetModal({
                   {w.type} · {w.dataset_name}
                 </p>
               </div>
-              <Plus size={18} className="text-blue-600" />
+              <Plus size={18} className="text-slate-700" />
             </button>
           ))}
         </div>
@@ -491,14 +489,8 @@ function AddWidgetModal({
 }
 
 
-// ===== модалка добавления KPI =====
-function AddKpiModal({
-  open,
-  onClose,
-  dashboardId,
-  existingKpiIds,
-  onAdded,
-}) {
+function AddKpiModal({ open, onClose, dashboardId, existingKpiIds, onAdded }) {
+  const toast = useToast();
   const [kpis, setKpis] = useState([]);
   const [busy, setBusy] = useState(false);
 
@@ -513,22 +505,18 @@ function AddKpiModal({
     setBusy(true);
     try {
       await addKpiToDashboard(dashboardId, kpiId);
+      toast.success("KPI добавлен");
       onClose();
       onAdded();
     } catch (e) {
-      alert(e?.response?.data?.message || "Ошибка");
+      toast.error(e?.response?.data?.message || "Ошибка");
     } finally {
       setBusy(false);
     }
   };
 
   return (
-    <Modal
-      open={open}
-      onClose={onClose}
-      title="Добавить KPI"
-      maxWidth="max-w-2xl"
-    >
+    <Modal open={open} onClose={onClose} title="Добавить KPI" maxWidth="max-w-2xl">
       {available.length === 0 ? (
         <p className="py-6 text-center text-sm text-slate-500">
           {existingKpiIds.length > 0
@@ -542,20 +530,18 @@ function AddKpiModal({
               key={k.id}
               onClick={() => handleAdd(k.id)}
               disabled={busy}
-              className="flex w-full items-center justify-between rounded-lg border border-slate-200 p-3 text-left hover:border-blue-500 hover:bg-blue-50 disabled:opacity-50"
+              className="flex w-full items-center justify-between rounded-lg border border-slate-200 p-3 text-left hover:border-slate-400 hover:bg-slate-50 disabled:opacity-50"
             >
               <div>
                 <p className="font-medium">{k.name}</p>
                 <p className="text-xs text-slate-500">
                   {k.category_name || "без категории"}
                   {k.target_value !== null
-                    ? ` · цель ${k.target_value}${
-                        k.unit ? " " + k.unit : ""
-                      }`
+                    ? ` · цель ${k.target_value}${k.unit ? " " + k.unit : ""}`
                     : ""}
                 </p>
               </div>
-              <Plus size={18} className="text-blue-600" />
+              <Plus size={18} className="text-slate-700" />
             </button>
           ))}
         </div>
@@ -565,8 +551,8 @@ function AddKpiModal({
 }
 
 
-// ===== модалка редактирования имени дашборда =====
 function EditMetaModal({ open, onClose, dashboard, onUpdated }) {
+  const toast = useToast();
   const [name, setName] = useState("");
   const [desc, setDesc] = useState("");
   const [busy, setBusy] = useState(false);
@@ -582,10 +568,11 @@ function EditMetaModal({ open, onClose, dashboard, onUpdated }) {
     setBusy(true);
     try {
       await updateDashboard(dashboard.id, { name, description: desc });
+      toast.success("Дашборд обновлён");
       onClose();
       onUpdated();
     } catch (e) {
-      alert(e?.response?.data?.message || "Ошибка");
+      toast.error(e?.response?.data?.message || "Ошибка");
     } finally {
       setBusy(false);
     }
@@ -626,7 +613,7 @@ function EditMetaModal({ open, onClose, dashboard, onUpdated }) {
           <button
             type="submit"
             disabled={busy}
-            className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+            className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
           >
             {busy ? "Сохранение..." : "Сохранить"}
           </button>

@@ -3,10 +3,11 @@ import {
   Users,
   Database,
   BarChart3,
-  Settings,
   ChevronLeft,
   ChevronRight,
   PieChart,
+  User as UserIcon,
+  Home,
 } from "lucide-react";
 
 import { Link, useLocation } from "react-router-dom";
@@ -18,45 +19,34 @@ export default function Sidebar({ collapsed, setCollapsed }) {
   const location = useLocation();
   const { user } = useAuth();
 
+  const isAdmin = user?.roles?.includes("admin");
+
+  // Главное меню — доступно всем авторизованным
   const menuItems = [
-    {
-      title: "Дашборды",
-      icon: LayoutDashboard,
-      path: "/dashboards",
-    },
-    {
-      title: "Виджеты",
-      icon: PieChart,
-      path: "/widgets",
-    },
-    {
-      title: "Показатели KPI",
-      icon: BarChart3,
-      path: "/kpi",
-    },
-    {
-      title: "Источники данных",
-      icon: Database,
-      path: "/datasources",
-    },
+    { title: "Главная", icon: Home, path: "/" },
+    { title: "Дашборды", icon: LayoutDashboard, path: "/dashboards" },
+    { title: "Виджеты", icon: PieChart, path: "/widgets" },
+    { title: "Показатели KPI", icon: BarChart3, path: "/kpi" },
+    { title: "Источники данных", icon: Database, path: "/datasources" },
   ];
 
+  // Личный раздел — для всех авторизованных
+  const personalItems = [
+    { title: "Профиль", icon: UserIcon, path: "/profile" },
+  ];
+
+  // Админский раздел
   const adminItems = [
-    {
-      title: "Пользователи",
-      icon: Users,
-      path: "/admin/users",
-    },
-    {
-      title: "Настройки",
-      icon: Settings,
-      path: "/settings",
-    },
+    { title: "Пользователи", icon: Users, path: "/admin/users" },
   ];
 
-  const isActive = (path) =>
-    location.pathname === path ||
-    location.pathname.startsWith(path + "/");
+  const isActive = (path) => {
+    if (path === "/") return location.pathname === "/";
+    return (
+      location.pathname === path ||
+      location.pathname.startsWith(path + "/")
+    );
+  };
 
   const renderItem = (item) => {
     const Icon = item.icon;
@@ -75,6 +65,7 @@ export default function Sidebar({ collapsed, setCollapsed }) {
               : "text-slate-300 hover:bg-slate-800 hover:text-white"
           }
         `}
+        title={collapsed ? item.title : undefined}
       >
         <Icon size={20} />
         {!collapsed && item.title}
@@ -97,7 +88,6 @@ export default function Sidebar({ collapsed, setCollapsed }) {
             <p className="mt-1 text-sm text-slate-400">Бизнес-аналитика</p>
           </div>
         )}
-
         <button
           onClick={() => setCollapsed(!collapsed)}
           className="rounded-lg p-2 transition hover:bg-slate-800"
@@ -107,18 +97,33 @@ export default function Sidebar({ collapsed, setCollapsed }) {
       </div>
 
       <nav className="flex flex-1 flex-col gap-6 overflow-y-auto p-4">
-        <div>
-          {!collapsed && (
-            <p className="mb-2 px-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
-              Аналитика
-            </p>
-          )}
-          <div className="flex flex-col gap-1">
-            {menuItems.map(renderItem)}
+        {user && (
+          <div>
+            {!collapsed && (
+              <p className="mb-2 px-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
+                Аналитика
+              </p>
+            )}
+            <div className="flex flex-col gap-1">
+              {menuItems.map(renderItem)}
+            </div>
           </div>
-        </div>
+        )}
 
-        {user?.roles?.includes("admin") && (
+        {user && (
+          <div>
+            {!collapsed && (
+              <p className="mb-2 px-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
+                Личное
+              </p>
+            )}
+            <div className="flex flex-col gap-1">
+              {personalItems.map(renderItem)}
+            </div>
+          </div>
+        )}
+
+        {isAdmin && (
           <div>
             {!collapsed && (
               <p className="mb-2 px-3 text-xs font-semibold uppercase tracking-wider text-slate-500">

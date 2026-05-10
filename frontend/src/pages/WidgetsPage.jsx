@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   Plus,
@@ -11,7 +11,9 @@ import {
 
 import { listWidgets, getWidgetData } from "../api/widgetApi";
 import { useAuth } from "../context/AuthContext";
+import { useToast } from "../context/ToastContext";
 import WidgetRenderer from "../components/WidgetRenderer";
+import ListToolbar, { applySort, matchesSearch } from "../components/ListToolbar";
 
 
 const TYPE_ICON = {
@@ -30,9 +32,24 @@ const TYPE_LABEL = {
   kpi_card: "KPI",
 };
 
+const SORT_OPTIONS = [
+  { value: "id_desc", label: "Сначала новые" },
+  { value: "id_asc", label: "Сначала старые" },
+  { value: "title_asc", label: "По имени А→Я" },
+  { value: "title_desc", label: "По имени Я→А" },
+];
+
+const SORT_MAP = {
+  id_desc: { field: "id", direction: "desc" },
+  id_asc: { field: "id", direction: "asc" },
+  title_asc: { field: "title", direction: "asc" },
+  title_desc: { field: "title", direction: "desc" },
+};
+
 
 export default function WidgetsPage() {
   const { user } = useAuth();
+  const toast = useToast();
   const canEdit = user?.roles?.some((r) =>
     ["admin", "expert"].includes(r)
   );
@@ -40,12 +57,32 @@ export default function WidgetsPage() {
   const [widgets, setWidgets] = useState([]);
   const [loading, setLoading] = useState(true);
 
+  const [search, setSearch] = useState("");
+  const [sort, setSort] = useState("id_desc");
+  const [typeFilter, setTypeFilter] = useState(null);
+
   useEffect(() => {
-    listWidgets().then(({ data }) => {
-      setWidgets(data);
-      setLoading(false);
-    });
+    listWidgets()
+      .then(({ data }) => {
+        setWidgets(data);
+      })
+      .catch(() => toast.error("Не удалось загрузить виджеты"))
+      .finally(() => setLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const filtered = useMemo(() => {
+    let result = widgets;
+    if (typeFilter) result = result.filter((w) => w.type === typeFilter);
+    result = result.filter((w) =>
+      matchesSearch(w, search, ["title", "dataset_name"])
+    );
+    return applySort(result, sort, SORT_MAP);
+  }, [widgets, search, sort, typeFilter]);
+
+  const availableTypes = useMemo(() => {
+    return Array.from(new Set(widgets.map((w) => w.type)));
+  }, [widgets]);
 
   return (
     <div className="space-y-6">
@@ -60,7 +97,7 @@ export default function WidgetsPage() {
         {canEdit && (
           <Link
             to="/widgets/new"
-            className="flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500"
+            className="flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
           >
             <Plus size={18} />
             Создать виджет
@@ -68,28 +105,72 @@ export default function WidgetsPage() {
         )}
       </div>
 
+      <ListToolbar
+        search={search}
+        onSearchChange={setSearch}
+        searchPlaceholder="Поиск по названию и датасету..."
+        sortValue={sort}
+        onSortChange={setSort}
+        sortOptions={SORT_OPTIONS}
+      >
+        {availableTypes.length > 1 && (
+          <div className="flex gap-1">
+            <FilterChip
+              active={typeFilter === null}
+              onClick={() => setTypeFilter(null)}
+            >
+              Все ({widgets.length})
+            </FilterChip>
+            {availableTypes.map((t) => (
+              <FilterChip
+                key={t}
+                active={typeFilter === t}
+                onClick={() => setTypeFilter(t)}
+              >
+                {TYPE_LABEL[t]} ({widgets.filter((w) => w.type === t).length})
+              </FilterChip>
+            ))}
+          </div>
+        )}
+      </ListToolbar>
+
       {loading && <p className="text-slate-500">Загрузка...</p>}
 
-      {!loading && widgets.length === 0 && (
+      {!loading && filtered.length === 0 && (
         <div className="rounded-2xl bg-white p-12 text-center shadow-sm">
           <BarChart3 className="mx-auto mb-4 text-slate-400" size={48} />
-          <p className="text-slate-600">Пока нет виджетов</p>
-          {canEdit && (
-            <p className="mt-2 text-sm text-slate-500">
-              Создайте первый виджет, чтобы визуализировать данные
-            </p>
-          )}
+          <p className="text-slate-600">
+            {search || typeFilter
+              ? "Ничего не найдено"
+              : "Пока нет виджетов"}
+          </p>
         </div>
       )}
 
-      {widgets.length > 0 && (
+      {filtered.length > 0 && (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {widgets.map((w) => (
+          {filtered.map((w) => (
             <WidgetCard key={w.id} widget={w} />
           ))}
         </div>
       )}
     </div>
+  );
+}
+
+
+function FilterChip({ active, onClick, children }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`rounded-full px-3 py-1.5 text-xs font-medium ${
+        active
+          ? "bg-slate-900 text-white"
+          : "bg-white text-slate-700 hover:bg-slate-100"
+      }`}
+    >
+      {children}
+    </button>
   );
 }
 
@@ -125,7 +206,7 @@ function WidgetCard({ widget }) {
     >
       <div className="mb-3 flex items-start justify-between">
         <div className="flex items-center gap-2">
-          <div className="rounded-lg bg-blue-50 p-1.5 text-blue-600">
+          <div className="rounded-lg bg-slate-100 p-1.5 text-slate-700">
             <Icon size={16} />
           </div>
           <div>

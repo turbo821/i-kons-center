@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   Database,
@@ -20,7 +20,10 @@ import {
 } from "../api/datasourceApi";
 
 import { useAuth } from "../context/AuthContext";
+import { useToast } from "../context/ToastContext";
+import { useConfirm } from "../context/ConfirmContext";
 import Modal from "../components/Modal";
+import ListToolbar, { applySort, matchesSearch } from "../components/ListToolbar";
 
 
 const TYPE_ICON = {
@@ -35,16 +38,33 @@ const TYPE_LABEL = {
   mysql: "MySQL",
 };
 
+const SORT_OPTIONS = [
+  { value: "created_desc", label: "Сначала новые" },
+  { value: "created_asc", label: "Сначала старые" },
+  { value: "name_asc", label: "По имени А→Я" },
+  { value: "name_desc", label: "По имени Я→А" },
+];
+
+const SORT_MAP = {
+  created_desc: { field: "created_at", direction: "desc" },
+  created_asc: { field: "created_at", direction: "asc" },
+  name_asc: { field: "name", direction: "asc" },
+  name_desc: { field: "name", direction: "desc" },
+};
+
 
 export default function DataSourcesPage() {
   const { user } = useAuth();
-  const canEdit = user?.roles?.some((r) =>
-    ["admin", "expert"].includes(r)
-  );
+  const toast = useToast();
+  const confirm = useConfirm();
+  const canEdit = user?.roles?.some((r) => ["admin", "expert"].includes(r));
 
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+
+  const [search, setSearch] = useState("");
+  const [sort, setSort] = useState("created_desc");
+  const [typeFilter, setTypeFilter] = useState(null);
 
   const [uploadOpen, setUploadOpen] = useState(false);
   const [sqlOpen, setSqlOpen] = useState(false);
@@ -52,12 +72,11 @@ export default function DataSourcesPage() {
 
   const load = async () => {
     setLoading(true);
-    setError(null);
     try {
       const { data } = await listDataSources();
       setItems(data);
     } catch (e) {
-      setError("Не удалось загрузить список");
+      toast.error("Не удалось загрузить список");
     } finally {
       setLoading(false);
     }
@@ -65,15 +84,31 @@ export default function DataSourcesPage() {
 
   useEffect(() => {
     load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleDelete = async (id) => {
-    if (!window.confirm("Удалить источник данных?")) return;
+  // Применяем поиск, фильтр по типу и сортировку
+  const filtered = useMemo(() => {
+    let result = items;
+    if (typeFilter) result = result.filter((i) => i.type === typeFilter);
+    result = result.filter((i) => matchesSearch(i, search, ["name", "type"]));
+    return applySort(result, sort, SORT_MAP);
+  }, [items, search, sort, typeFilter]);
+
+  const handleDelete = async (item) => {
+    const ok = await confirm({
+      title: "Удалить источник данных?",
+      body: `«${item.name}» будет удалён. Действие необратимо.`,
+      confirmText: "Удалить",
+      danger: true,
+    });
+    if (!ok) return;
     try {
-      await deleteDataSource(id);
+      await deleteDataSource(item.id);
+      toast.success("Источник удалён");
       load();
     } catch (e) {
-      alert(e?.response?.data?.message || "Ошибка удаления");
+      toast.error(e?.response?.data?.message || "Ошибка удаления");
     }
   };
 
@@ -82,11 +117,22 @@ export default function DataSourcesPage() {
     try {
       const { data } = await testDataSource(id);
       setTestStatus((s) => ({ ...s, [id]: data.ok ? "ok" : "fail" }));
-      if (!data.ok) alert(data.message);
+      if (data.ok) {
+        toast.success("Подключение работает");
+      } else {
+        toast.error(data.message || "Подключение недоступно");
+      }
     } catch (e) {
       setTestStatus((s) => ({ ...s, [id]: "fail" }));
+      toast.error("Ошибка проверки");
     }
   };
+
+  // Типы, представленные в данных — для фильтр-чипов
+  const availableTypes = useMemo(() => {
+    const set = new Set(items.map((i) => i.type));
+    return Array.from(set);
+  }, [items]);
 
   return (
     <div className="space-y-6">
@@ -109,7 +155,7 @@ export default function DataSourcesPage() {
             </button>
             <button
               onClick={() => setSqlOpen(true)}
-              className="flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500"
+              className="flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
             >
               <Plus size={18} />
               Подключить БД
@@ -118,26 +164,51 @@ export default function DataSourcesPage() {
         )}
       </div>
 
-      {loading && <p className="text-slate-500">Загрузка...</p>}
-      {error && <p className="text-red-600">{error}</p>}
+      <ListToolbar
+        search={search}
+        onSearchChange={setSearch}
+        searchPlaceholder="Поиск по имени..."
+        sortValue={sort}
+        onSortChange={setSort}
+        sortOptions={SORT_OPTIONS}
+      >
+        {availableTypes.length > 1 && (
+          <div className="flex gap-1">
+            <FilterChip
+              active={typeFilter === null}
+              onClick={() => setTypeFilter(null)}
+            >
+              Все ({items.length})
+            </FilterChip>
+            {availableTypes.map((t) => (
+              <FilterChip
+                key={t}
+                active={typeFilter === t}
+                onClick={() => setTypeFilter(t)}
+              >
+                {TYPE_LABEL[t]} ({items.filter((i) => i.type === t).length})
+              </FilterChip>
+            ))}
+          </div>
+        )}
+      </ListToolbar>
 
-      {!loading && items.length === 0 && (
+      {loading && <p className="text-slate-500">Загрузка...</p>}
+
+      {!loading && filtered.length === 0 && (
         <div className="rounded-2xl bg-white p-12 text-center shadow-sm">
           <Database className="mx-auto mb-4 text-slate-400" size={48} />
           <p className="text-slate-600">
-            Пока нет ни одного источника данных
+            {search || typeFilter
+              ? "Ничего не найдено по фильтрам"
+              : "Пока нет ни одного источника данных"}
           </p>
-          {canEdit && (
-            <p className="mt-2 text-sm text-slate-500">
-              Загрузите CSV-файл или подключите внешнюю базу
-            </p>
-          )}
         </div>
       )}
 
-      {items.length > 0 && (
+      {filtered.length > 0 && (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {items.map((item) => {
+          {filtered.map((item) => {
             const Icon = TYPE_ICON[item.type] || Database;
             const status = testStatus[item.id];
 
@@ -148,7 +219,7 @@ export default function DataSourcesPage() {
               >
                 <div className="mb-3 flex items-start justify-between">
                   <div className="flex items-center gap-3">
-                    <div className="rounded-xl bg-blue-50 p-2 text-blue-600">
+                    <div className="rounded-xl bg-slate-100 p-2 text-slate-700">
                       <Icon size={22} />
                     </div>
                     <div>
@@ -194,7 +265,7 @@ export default function DataSourcesPage() {
 
                   {canEdit && (
                     <button
-                      onClick={() => handleDelete(item.id)}
+                      onClick={() => handleDelete(item)}
                       className="ml-auto flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50"
                     >
                       <Trash2 size={12} />
@@ -224,17 +295,31 @@ export default function DataSourcesPage() {
 }
 
 
-// --------------- модалка загрузки файла ---------------
+function FilterChip({ active, onClick, children }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`rounded-full px-3 py-1.5 text-xs font-medium ${
+        active
+          ? "bg-slate-900 text-white"
+          : "bg-white text-slate-700 hover:bg-slate-100"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+
 function UploadFileModal({ open, onClose, onCreated }) {
+  const toast = useToast();
   const [file, setFile] = useState(null);
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState(null);
 
   const reset = () => {
     setFile(null);
     setName("");
-    setErr(null);
   };
 
   const handleSubmit = async (e) => {
@@ -242,14 +327,14 @@ function UploadFileModal({ open, onClose, onCreated }) {
     if (!file) return;
 
     setBusy(true);
-    setErr(null);
     try {
       await uploadFileDataSource(file, name);
+      toast.success("Файл загружен");
       reset();
       onClose();
       onCreated();
     } catch (e) {
-      setErr(e?.response?.data?.message || "Ошибка загрузки");
+      toast.error(e?.response?.data?.message || "Ошибка загрузки");
     } finally {
       setBusy(false);
     }
@@ -284,8 +369,6 @@ function UploadFileModal({ open, onClose, onCreated }) {
           />
         </div>
 
-        {err && <p className="text-sm text-red-600">{err}</p>}
-
         <div className="flex justify-end gap-2 pt-2">
           <button
             type="button"
@@ -297,7 +380,7 @@ function UploadFileModal({ open, onClose, onCreated }) {
           <button
             type="submit"
             disabled={busy || !file}
-            className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+            className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
           >
             {busy ? "Загрузка..." : "Загрузить"}
           </button>
@@ -308,8 +391,8 @@ function UploadFileModal({ open, onClose, onCreated }) {
 }
 
 
-// --------------- модалка создания SQL-подключения ---------------
 function CreateSqlModal({ open, onClose, onCreated }) {
+  const toast = useToast();
   const [form, setForm] = useState({
     name: "",
     type: "postgres",
@@ -320,7 +403,6 @@ function CreateSqlModal({ open, onClose, onCreated }) {
     password: "",
   });
   const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState(null);
 
   const change = (e) =>
     setForm((f) => ({
@@ -332,13 +414,13 @@ function CreateSqlModal({ open, onClose, onCreated }) {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setBusy(true);
-    setErr(null);
     try {
       await createSqlDataSource(form);
+      toast.success("Источник подключён");
       onClose();
       onCreated();
     } catch (e) {
-      setErr(e?.response?.data?.message || "Ошибка подключения");
+      toast.error(e?.response?.data?.message || "Ошибка подключения");
     } finally {
       setBusy(false);
     }
@@ -369,22 +451,8 @@ function CreateSqlModal({ open, onClose, onCreated }) {
         </div>
 
         <Field label="Хост" name="host" value={form.host} onChange={change} required />
-        <Field
-          label="Порт"
-          name="port"
-          type="number"
-          value={form.port}
-          onChange={change}
-          required
-        />
-
-        <Field
-          label="База данных"
-          name="database"
-          value={form.database}
-          onChange={change}
-          required
-        />
+        <Field label="Порт" name="port" type="number" value={form.port} onChange={change} required />
+        <Field label="База данных" name="database" value={form.database} onChange={change} required />
         <Field label="Пользователь" name="user" value={form.user} onChange={change} required />
 
         <div className="col-span-2">
@@ -398,8 +466,6 @@ function CreateSqlModal({ open, onClose, onCreated }) {
           />
         </div>
 
-        {err && <p className="col-span-2 text-sm text-red-600">{err}</p>}
-
         <div className="col-span-2 flex justify-end gap-2 pt-2">
           <button
             type="button"
@@ -411,7 +477,7 @@ function CreateSqlModal({ open, onClose, onCreated }) {
           <button
             type="submit"
             disabled={busy}
-            className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+            className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
           >
             {busy ? "Подключение..." : "Подключить"}
           </button>
