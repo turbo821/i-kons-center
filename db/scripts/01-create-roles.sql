@@ -1,4 +1,4 @@
--- Роли пользователей
+-- Базовые роли системы
 INSERT INTO roles (name, description) VALUES
     ('admin',  'Администратор системы'),
     ('expert', 'Аналитик / эксперт'),
