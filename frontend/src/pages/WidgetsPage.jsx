@@ -7,6 +7,7 @@ import {
   PieChart as PieIcon,
   Table as TableIcon,
   Hash,
+  FolderTree
 } from "lucide-react";
 
 import { listWidgets, getWidgetData } from "../api/widgetApi";
@@ -15,6 +16,9 @@ import { useToast } from "../context/ToastContext";
 import WidgetRenderer from "../components/WidgetRenderer";
 import ListToolbar, { applySort, matchesSearch } from "../components/ListToolbar";
 
+import { widgetCategoryApi } from "../api/categoryApi";
+import CategoriesModal from "../components/CategoriesModal";
+import CategoryFilterChips from "../components/CategoryFilterChips";
 
 const TYPE_ICON = {
   bar: BarChart3,
@@ -61,6 +65,10 @@ export default function WidgetsPage() {
   const [sort, setSort] = useState("id_desc");
   const [typeFilter, setTypeFilter] = useState(null);
 
+  const [categories, setCategories] = useState([]);
+  const [filterCategory, setFilterCategory] = useState(undefined); // undefined = все
+  const [categoriesOpen, setCategoriesOpen] = useState(false);
+
   useEffect(() => {
     listWidgets()
       .then(({ data }) => {
@@ -71,18 +79,35 @@ export default function WidgetsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const load = async () => {
+    const [itemsRes, catsRes] = await Promise.all([
+      listWidgets(),
+      widgetCategoryApi.list(),
+    ]);
+    setWidgets(itemsRes.data);
+    setCategories(catsRes.data);
+  };
+
   const filtered = useMemo(() => {
     let result = widgets;
+    if (filterCategory !== undefined) {
+      result = result.filter((i) => i.category_id === filterCategory);
+    }
     if (typeFilter) result = result.filter((w) => w.type === typeFilter);
     result = result.filter((w) =>
       matchesSearch(w, search, ["title", "dataset_name"])
     );
     return applySort(result, sort, SORT_MAP);
-  }, [widgets, search, sort, typeFilter]);
+  }, [widgets, filterCategory, search, sort, typeFilter]);
 
   const availableTypes = useMemo(() => {
     return Array.from(new Set(widgets.map((w) => w.type)));
   }, [widgets]);
+
+  const getCountForCategory = (catId) => {
+    if (catId === null) return widgets.filter((i) => !i.category_id).length;
+    return widgets.filter((i) => i.category_id === catId).length;
+  };
 
   return (
     <div className="space-y-6">
@@ -95,13 +120,23 @@ export default function WidgetsPage() {
         </div>
 
         {canEdit && (
-          <Link
-            to="/widgets/new"
-            className="flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
-          >
-            <Plus size={18} />
-            Создать виджет
-          </Link>
+          <div className="flex gap-3">
+            <button
+              onClick={() => setCategoriesOpen(true)}
+              className="flex items-center gap-2 rounded-xl bg-slate-100 px-4 py-2 text-sm font-medium hover:bg-slate-200"
+            >
+              <FolderTree size={16} />
+              Категории
+            </button>
+            <Link
+              to="/widgets/new"
+              className="flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
+            >
+              <Plus size={18} />
+              Создать виджет
+            </Link>
+          </div>
+
         )}
       </div>
 
@@ -134,6 +169,16 @@ export default function WidgetsPage() {
         )}
       </ListToolbar>
 
+      {categories.length > 0 && (
+        <CategoryFilterChips
+          categories={categories}
+          value={filterCategory}
+          onChange={setFilterCategory}
+          getCountForCategory={getCountForCategory}
+          totalCount={widgets.length}
+        />
+      )}
+
       {loading && <p className="text-slate-500">Загрузка...</p>}
 
       {!loading && filtered.length === 0 && (
@@ -154,6 +199,15 @@ export default function WidgetsPage() {
           ))}
         </div>
       )}
+
+      <CategoriesModal
+        open={categoriesOpen}
+        onClose={() => setCategoriesOpen(false)}
+        title="Категории виджетов"  // или соответствующее
+        categories={categories}
+        api={widgetCategoryApi}     // или соответствующий
+        onChanged={load}
+      />
     </div>
   );
 }
@@ -214,6 +268,11 @@ function WidgetCard({ widget }) {
             <p className="text-xs text-slate-500">
               {TYPE_LABEL[widget.type]} · {widget.dataset_name}
             </p>
+            {widget.category_name && (
+              <p className="mt-0.5 inline-block rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-600">
+                {widget.category_name}
+              </p>
+            )}
           </div>
         </div>
       </div>

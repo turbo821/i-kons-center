@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   XCircle,
   RefreshCw,
+  FolderTree,
 } from "lucide-react";
 
 import {
@@ -18,12 +19,18 @@ import {
   deleteDataSource,
   testDataSource,
 } from "../api/datasourceApi";
+import { datasourceCategoryApi } from "../api/categoryApi";
 
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
 import { useConfirm } from "../context/ConfirmContext";
 import Modal from "../components/Modal";
-import ListToolbar, { applySort, matchesSearch } from "../components/ListToolbar";
+import CategoriesModal from "../components/CategoriesModal";
+import CategoryFilterChips from "../components/CategoryFilterChips";
+import ListToolbar, {
+  applySort,
+  matchesSearch,
+} from "../components/ListToolbar";
 
 
 const TYPE_ICON = {
@@ -57,24 +64,34 @@ export default function DataSourcesPage() {
   const { user } = useAuth();
   const toast = useToast();
   const confirm = useConfirm();
-  const canEdit = user?.roles?.some((r) => ["admin", "expert"].includes(r));
+  const canEdit = user?.roles?.some((r) =>
+    ["admin", "expert"].includes(r)
+  );
 
   const [items, setItems] = useState([]);
+  const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
 
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState("created_desc");
+  // undefined = «Все», null = «Без категории», int = конкретная категория
+  const [filterCategory, setFilterCategory] = useState(undefined);
   const [typeFilter, setTypeFilter] = useState(null);
 
   const [uploadOpen, setUploadOpen] = useState(false);
   const [sqlOpen, setSqlOpen] = useState(false);
+  const [categoriesOpen, setCategoriesOpen] = useState(false);
   const [testStatus, setTestStatus] = useState({});
 
   const load = async () => {
     setLoading(true);
     try {
-      const { data } = await listDataSources();
-      setItems(data);
+      const [itemsRes, catsRes] = await Promise.all([
+        listDataSources(),
+        datasourceCategoryApi.list(),
+      ]);
+      setItems(itemsRes.data);
+      setCategories(catsRes.data);
     } catch (e) {
       toast.error("Не удалось загрузить список");
     } finally {
@@ -87,13 +104,23 @@ export default function DataSourcesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Применяем поиск, фильтр по типу и сортировку
   const filtered = useMemo(() => {
     let result = items;
-    if (typeFilter) result = result.filter((i) => i.type === typeFilter);
-    result = result.filter((i) => matchesSearch(i, search, ["name", "type"]));
+
+    if (filterCategory !== undefined) {
+      result = result.filter((i) => i.category_id === filterCategory);
+    }
+
+    if (typeFilter) {
+      result = result.filter((i) => i.type === typeFilter);
+    }
+
+    result = result.filter((i) =>
+      matchesSearch(i, search, ["name", "type", "category_name"])
+    );
+
     return applySort(result, sort, SORT_MAP);
-  }, [items, search, sort, typeFilter]);
+  }, [items, search, sort, filterCategory, typeFilter]);
 
   const handleDelete = async (item) => {
     const ok = await confirm({
@@ -108,7 +135,7 @@ export default function DataSourcesPage() {
       toast.success("Источник удалён");
       load();
     } catch (e) {
-      toast.error(e?.response?.data?.message || "Ошибка удаления");
+      toast.error(e?.response?.data?.message || "Ошибка");
     }
   };
 
@@ -117,22 +144,22 @@ export default function DataSourcesPage() {
     try {
       const { data } = await testDataSource(id);
       setTestStatus((s) => ({ ...s, [id]: data.ok ? "ok" : "fail" }));
-      if (data.ok) {
-        toast.success("Подключение работает");
-      } else {
-        toast.error(data.message || "Подключение недоступно");
-      }
+      if (data.ok) toast.success("Подключение работает");
+      else toast.error(data.message || "Подключение недоступно");
     } catch (e) {
       setTestStatus((s) => ({ ...s, [id]: "fail" }));
       toast.error("Ошибка проверки");
     }
   };
 
-  // Типы, представленные в данных — для фильтр-чипов
   const availableTypes = useMemo(() => {
-    const set = new Set(items.map((i) => i.type));
-    return Array.from(set);
+    return Array.from(new Set(items.map((i) => i.type)));
   }, [items]);
+
+  const getCountForCategory = (catId) => {
+    if (catId === null) return items.filter((i) => !i.category_id).length;
+    return items.filter((i) => i.category_id === catId).length;
+  };
 
   return (
     <div className="space-y-6">
@@ -146,6 +173,13 @@ export default function DataSourcesPage() {
 
         {canEdit && (
           <div className="flex gap-3">
+            <button
+              onClick={() => setCategoriesOpen(true)}
+              className="flex items-center gap-2 rounded-xl bg-slate-100 px-4 py-2 text-sm font-medium hover:bg-slate-200"
+            >
+              <FolderTree size={16} />
+              Категории
+            </button>
             <button
               onClick={() => setUploadOpen(true)}
               className="flex items-center gap-2 rounded-xl bg-slate-100 px-4 py-2 text-sm font-medium hover:bg-slate-200"
@@ -174,24 +208,42 @@ export default function DataSourcesPage() {
       >
         {availableTypes.length > 1 && (
           <div className="flex gap-1">
-            <FilterChip
-              active={typeFilter === null}
+            <button
               onClick={() => setTypeFilter(null)}
+              className={`rounded-full px-3 py-1.5 text-xs font-medium ${
+                typeFilter === null
+                  ? "bg-slate-900 text-white"
+                  : "bg-white text-slate-700 hover:bg-slate-100"
+              }`}
             >
-              Все ({items.length})
-            </FilterChip>
+              Все типы ({items.length})
+            </button>
             {availableTypes.map((t) => (
-              <FilterChip
+              <button
                 key={t}
-                active={typeFilter === t}
                 onClick={() => setTypeFilter(t)}
+                className={`rounded-full px-3 py-1.5 text-xs font-medium ${
+                  typeFilter === t
+                    ? "bg-slate-900 text-white"
+                    : "bg-white text-slate-700 hover:bg-slate-100"
+                }`}
               >
                 {TYPE_LABEL[t]} ({items.filter((i) => i.type === t).length})
-              </FilterChip>
+              </button>
             ))}
           </div>
         )}
       </ListToolbar>
+
+      {categories.length > 0 && (
+        <CategoryFilterChips
+          categories={categories}
+          value={filterCategory}
+          onChange={setFilterCategory}
+          getCountForCategory={getCountForCategory}
+          totalCount={items.length}
+        />
+      )}
 
       {loading && <p className="text-slate-500">Загрузка...</p>}
 
@@ -199,7 +251,7 @@ export default function DataSourcesPage() {
         <div className="rounded-2xl bg-white p-12 text-center shadow-sm">
           <Database className="mx-auto mb-4 text-slate-400" size={48} />
           <p className="text-slate-600">
-            {search || typeFilter
+            {search || filterCategory !== undefined || typeFilter
               ? "Ничего не найдено по фильтрам"
               : "Пока нет ни одного источника данных"}
           </p>
@@ -227,6 +279,11 @@ export default function DataSourcesPage() {
                       <p className="text-xs text-slate-500">
                         {TYPE_LABEL[item.type] || item.type}
                       </p>
+                      {item.category_name && (
+                        <p className="mt-0.5 inline-block rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-600">
+                          {item.category_name}
+                        </p>
+                      )}
                     </div>
                   </div>
 
@@ -282,45 +339,36 @@ export default function DataSourcesPage() {
       <UploadFileModal
         open={uploadOpen}
         onClose={() => setUploadOpen(false)}
+        categories={categories}
         onCreated={load}
       />
 
       <CreateSqlModal
         open={sqlOpen}
         onClose={() => setSqlOpen(false)}
+        categories={categories}
         onCreated={load}
+      />
+
+      <CategoriesModal
+        open={categoriesOpen}
+        onClose={() => setCategoriesOpen(false)}
+        title="Категории источников данных"
+        categories={categories}
+        api={datasourceCategoryApi}
+        onChanged={load}
       />
     </div>
   );
 }
 
 
-function FilterChip({ active, onClick, children }) {
-  return (
-    <button
-      onClick={onClick}
-      className={`rounded-full px-3 py-1.5 text-xs font-medium ${
-        active
-          ? "bg-slate-900 text-white"
-          : "bg-white text-slate-700 hover:bg-slate-100"
-      }`}
-    >
-      {children}
-    </button>
-  );
-}
-
-
-function UploadFileModal({ open, onClose, onCreated }) {
+function UploadFileModal({ open, onClose, categories, onCreated }) {
   const toast = useToast();
   const [file, setFile] = useState(null);
   const [name, setName] = useState("");
+  const [categoryId, setCategoryId] = useState("");
   const [busy, setBusy] = useState(false);
-
-  const reset = () => {
-    setFile(null);
-    setName("");
-  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -328,9 +376,15 @@ function UploadFileModal({ open, onClose, onCreated }) {
 
     setBusy(true);
     try {
-      await uploadFileDataSource(file, name);
+      await uploadFileDataSource(
+        file,
+        name,
+        categoryId ? Number(categoryId) : undefined
+      );
       toast.success("Файл загружен");
-      reset();
+      setFile(null);
+      setName("");
+      setCategoryId("");
       onClose();
       onCreated();
     } catch (e) {
@@ -369,6 +423,22 @@ function UploadFileModal({ open, onClose, onCreated }) {
           />
         </div>
 
+        <div>
+          <label className="mb-1 block text-sm font-medium">Категория</label>
+          <select
+            value={categoryId}
+            onChange={(e) => setCategoryId(e.target.value)}
+            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+          >
+            <option value="">— без категории —</option>
+            {categories.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+        </div>
+
         <div className="flex justify-end gap-2 pt-2">
           <button
             type="button"
@@ -391,7 +461,7 @@ function UploadFileModal({ open, onClose, onCreated }) {
 }
 
 
-function CreateSqlModal({ open, onClose, onCreated }) {
+function CreateSqlModal({ open, onClose, categories, onCreated }) {
   const toast = useToast();
   const [form, setForm] = useState({
     name: "",
@@ -401,6 +471,7 @@ function CreateSqlModal({ open, onClose, onCreated }) {
     database: "",
     user: "",
     password: "",
+    category_id: "",
   });
   const [busy, setBusy] = useState(false);
 
@@ -415,7 +486,11 @@ function CreateSqlModal({ open, onClose, onCreated }) {
     e.preventDefault();
     setBusy(true);
     try {
-      await createSqlDataSource(form);
+      const payload = {
+        ...form,
+        category_id: form.category_id ? Number(form.category_id) : null,
+      };
+      await createSqlDataSource(payload);
       toast.success("Источник подключён");
       onClose();
       onCreated();
@@ -464,6 +539,23 @@ function CreateSqlModal({ open, onClose, onCreated }) {
             onChange={change}
             required
           />
+        </div>
+
+        <div className="col-span-2">
+          <label className="mb-1 block text-sm font-medium">Категория</label>
+          <select
+            name="category_id"
+            value={form.category_id}
+            onChange={change}
+            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+          >
+            <option value="">— без категории —</option>
+            {categories.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
         </div>
 
         <div className="col-span-2 flex justify-end gap-2 pt-2">

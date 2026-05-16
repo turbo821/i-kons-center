@@ -149,7 +149,10 @@ psql -U postgres -c "CREATE DATABASE infocenter;"
 
 # Выполнить инициализационные SQL
 psql -U postgres -d infocenter -f db/scripts/01-create-roles.sql
-psql -U postgres -d infocenter -f db/scripts/02-create-kpi-categories.sql
+psql -U postgres -d infocenter -f db/scripts/02-kpi-categories.sql
+psql -U postgres -d infocenter -f db/scripts/03-datasource-categories.sql
+psql -U postgres -d infocenter -f db/scripts/04-widget-categories.sql
+psql -U postgres -d infocenter -f db/scripts/05-dashboard-categories.sql
 ```
 
 ### 2. Backend

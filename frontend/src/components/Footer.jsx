@@ -1,7 +1,7 @@
 import { Mail } from "lucide-react";
 import { FaGithub } from "react-icons/fa";
 
-const APP_VERSION = "1.0.0";
+const APP_VERSION = "1.3.0";
 
 
 export default function Footer() {

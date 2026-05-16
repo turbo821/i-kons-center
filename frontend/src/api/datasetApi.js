@@ -11,6 +11,9 @@ export const getDataset = (id) =>
 export const createDataset = (data) =>
   api.post("/datasets", data);
 
+export const updateDataset = (id, data) => 
+  api.put(`/datasets/${id}`, data);
+
 export const deleteDataset = (id) =>
   api.delete(`/datasets/${id}`);
 
