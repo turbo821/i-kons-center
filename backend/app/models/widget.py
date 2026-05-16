@@ -54,6 +54,23 @@ class Widget(db.Model):
         cascade="all, delete-orphan"
     )
 
+    category_id = db.Column(
+        db.Integer,
+        db.ForeignKey("widget_categories.id", ondelete="SET NULL"),
+        nullable=True
+    )
+
+    category = db.relationship(
+        "WidgetCategory",
+        back_populates="widgets"
+    )
+
+    created_at = db.Column(
+        db.DateTime,
+        server_default=db.func.now(),
+        nullable=False
+    )
+
     def to_dict(self, include_config=False):
         data = {
             "id": self.id,
@@ -61,6 +78,8 @@ class Widget(db.Model):
             "dataset_name": self.dataset.name if self.dataset else None,
             "title": self.title,
             "type": self.type,
+            "category_id": self.category_id,
+            "category_name": self.category.name if self.category else None,
         }
         if include_config:
             data["metrics"] = [m.to_dict() for m in self.metrics]

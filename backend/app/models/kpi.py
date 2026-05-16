@@ -2,10 +2,7 @@ from app.database.db import db
 
 
 class KPI(db.Model):
-    """
-    Ключевой показатель эффективности.
-    KPI ссылается на Metric и наследует её вычислимость.
-    """
+    """Ключевой показатель эффективности."""
     __tablename__ = "kpis"
 
     id = db.Column(db.Integer, primary_key=True)
@@ -16,7 +13,7 @@ class KPI(db.Model):
 
     category_id = db.Column(
         db.Integer,
-        db.ForeignKey("categories.id", ondelete="SET NULL"),
+        db.ForeignKey("kpi_categories.id", ondelete="SET NULL"),
         nullable=True
     )
 
@@ -31,13 +28,7 @@ class KPI(db.Model):
     target_value = db.Column(db.Float, nullable=True)
 
     unit = db.Column(db.String(50), nullable=True)
-
-    direction = db.Column(
-        db.String(20),
-        default="higher_better",
-        nullable=False
-    )
-
+    direction = db.Column(db.String(20), default="higher_better", nullable=False)
     manual_value = db.Column(db.Float, nullable=True)
 
     created_at = db.Column(
@@ -46,12 +37,7 @@ class KPI(db.Model):
         nullable=False
     )
 
-    # Связи
-    category = db.relationship(
-        "Category",
-        back_populates="kpis"
-    )
-
+    category = db.relationship("KPICategory", back_populates="kpis")
     metric = db.relationship("Metric")
 
     dashboards = db.relationship(
@@ -68,6 +54,24 @@ class KPI(db.Model):
     )
 
     def to_dict(self, include_metric=False):
+        # Информация о метрике с указанием источника и датасета
+        metric_info = None
+        if self.metric is not None:
+            field = self.metric.field
+            dataset = field.dataset if field else None
+            datasource = dataset.datasource if dataset else None
+            metric_info = {
+                "id": self.metric.id,
+                "name": self.metric.name,
+                "field_name": field.name if field else None,
+                "dataset_name": dataset.name if dataset else None,
+                "datasource_name": datasource.name if datasource else None,
+                "datasource_category_name": (
+                    datasource.category.name
+                    if datasource and datasource.category else None
+                ),
+            }
+
         data = {
             "id": self.id,
             "name": self.name,
@@ -75,6 +79,7 @@ class KPI(db.Model):
             "category_id": self.category_id,
             "category_name": self.category.name if self.category else None,
             "metric_id": self.metric_id,
+            "metric_info": metric_info,
             "formula": self.formula,
             "target_value": self.target_value,
             "unit": self.unit,

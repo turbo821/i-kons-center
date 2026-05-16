@@ -16,9 +16,9 @@ class Metric(db.Model):
         nullable=False
     )
 
-    name = db.Column(db.String(150), nullable=False)
+    name = db.Column(db.String(200), nullable=False)
 
-    aggregation_type = db.Column(db.String(30), nullable=False)
+    aggregation_type = db.Column(db.String(50), nullable=False)
 
     field = db.relationship(
         "DatasetField",
@@ -33,12 +33,24 @@ class Metric(db.Model):
     )
 
     def to_dict(self):
+        field = self.field
+        dataset = field.dataset if field else None
+        datasource = dataset.datasource if dataset else None
+
         return {
             "id": self.id,
             "field_id": self.field_id,
             "field_name": self.field.name if self.field else None,
             "name": self.name,
             "aggregation_type": self.aggregation_type,
+            "dataset_id": dataset.id if dataset else None,
+            "dataset_name": dataset.name if dataset else None,
+            "datasource_id": datasource.id if datasource else None,
+            "datasource_name": datasource.name if datasource else None,
+            "datasource_category_name": (
+                datasource.category.name
+                if datasource and datasource.category else None
+            ),
         }
 
 

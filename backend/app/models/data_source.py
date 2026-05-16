@@ -22,6 +22,17 @@ class DataSource(db.Model):
 
     connection_string = db.Column(db.Text, nullable=False)
 
+    category_id = db.Column(
+        db.Integer,
+        db.ForeignKey("datasource_categories.id", ondelete="SET NULL"),
+        nullable=True
+    )
+
+    category = db.relationship(
+        "DataSourceCategory",
+        back_populates="datasources"
+    )
+
     created_at = db.Column(
         db.DateTime,
         server_default=db.func.now(),
@@ -41,12 +52,17 @@ class DataSource(db.Model):
         back_populates="datasource",
         cascade="all, delete-orphan"
     )
+    
+    creator = db.relationship("User")
 
     def to_dict(self):
         return {
             "id": self.id,
             "name": self.name,
             "type": self.type,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "category_id": self.category_id,
+            "category_name": self.category.name if self.category else None,
             "created_by": self.created_by,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "datasets_count": len(self.datasets),
         }

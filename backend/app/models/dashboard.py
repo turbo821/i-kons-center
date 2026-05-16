@@ -10,6 +10,12 @@ class Dashboard(db.Model):
 
     description = db.Column(db.Text, nullable=True)
 
+    category_id = db.Column(
+        db.Integer,
+        db.ForeignKey("dashboard_categories.id", ondelete="SET NULL"),
+        nullable=True
+    )
+
     created_by = db.Column(
         db.Integer,
         db.ForeignKey("users.id", ondelete="SET NULL"),
@@ -24,6 +30,11 @@ class Dashboard(db.Model):
 
     creator = db.relationship(
         "User",
+        back_populates="dashboards"
+    )
+    
+    category = db.relationship(
+        "DashboardCategory",
         back_populates="dashboards"
     )
 
@@ -53,6 +64,8 @@ class Dashboard(db.Model):
             "id": self.id,
             "name": self.name,
             "description": self.description,
+            "category_id": self.category_id,
+            "category_name": self.category.name if self.category else None,
             "created_by": self.created_by,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
