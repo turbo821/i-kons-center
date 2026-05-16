@@ -1,9 +1,13 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Link } from "react-router-dom";
+import { UserPlus } from "lucide-react";
+
 import api from "../services/api";
 import { useToast } from "../context/ToastContext";
+import PasswordInput from "../components/PasswordInput";
 
-function RegisterPage() {
+
+export default function RegisterPage() {
   const [form, setForm] = useState({
     username: "",
     email: "",
@@ -14,7 +18,7 @@ function RegisterPage() {
   const navigate = useNavigate();
   const toast = useToast();
 
-  const handleChange = (e) =>
+  const change = (e) =>
     setForm({ ...form, [e.target.name]: e.target.value });
 
   const handleSubmit = async (e) => {
@@ -24,59 +28,87 @@ function RegisterPage() {
       await api.post("/auth/register", form);
       toast.success("Регистрация успешна. Теперь войдите в систему");
       navigate("/login");
-    } catch (error) {
-      toast.error(error?.response?.data?.message || "Ошибка регистрации");
+    } catch (err) {
+      toast.error(err?.response?.data?.message || "Ошибка регистрации");
     } finally {
       setBusy(false);
     }
   };
 
   return (
-    <div className="flex justify-center items-center mt-20">
+    <div className="flex min-h-[calc(100vh-200px)] items-center justify-center">
       <form
         onSubmit={handleSubmit}
-        className="w-full max-w-md bg-white p-8 rounded-2xl shadow-md space-y-6"
+        className="w-full max-w-md space-y-5 rounded-2xl bg-white p-8 shadow-md"
       >
-        <h2 className="text-2xl font-semibold text-center">Регистрация</h2>
+        <div className="text-center">
+          <div className="mx-auto mb-3 inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-900 text-white">
+            <UserPlus size={22} />
+          </div>
+          <h2 className="text-2xl font-semibold">Регистрация</h2>
+          <p className="mt-1 text-sm text-slate-500">
+            Создайте учётную запись для доступа к системе
+          </p>
+        </div>
 
-        <input
-          type="text"
-          name="username"
-          placeholder="Имя пользователя"
-          onChange={handleChange}
-          className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          required
-        />
+        <div>
+          <label className="mb-1 block text-sm font-medium">
+            Имя пользователя
+          </label>
+          <input
+            type="text"
+            name="username"
+            value={form.username}
+            onChange={change}
+            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-slate-400 focus:outline-none"
+            required
+            autoFocus
+          />
+        </div>
 
-        <input
-          type="email"
-          name="email"
-          placeholder="Email"
-          onChange={handleChange}
-          className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          required
-        />
+        <div>
+          <label className="mb-1 block text-sm font-medium">Email</label>
+          <input
+            type="email"
+            name="email"
+            value={form.email}
+            onChange={change}
+            placeholder="user@example.com"
+            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-slate-400 focus:outline-none"
+            required
+          />
+        </div>
 
-        <input
-          type="password"
-          name="password"
-          placeholder="Пароль"
-          onChange={handleChange}
-          className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          required
-          minLength={6}
-        />
+        <div>
+          <label className="mb-1 block text-sm font-medium">Пароль</label>
+          <PasswordInput
+            name="password"
+            value={form.password}
+            onChange={change}
+            placeholder="Минимум 6 символов"
+            required
+            minLength={6}
+          />
+        </div>
 
         <button
           type="submit"
           disabled={busy}
-          className="w-full bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-500 transition disabled:opacity-50"
+          className="w-full rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800 disabled:opacity-50"
         >
           {busy ? "Регистрация..." : "Зарегистрироваться"}
         </button>
+
+        <div className="text-center text-sm text-slate-500">
+          Уже есть аккаунт?{" "}
+          <Link
+            to="/login"
+            className="font-medium text-slate-900 hover:underline"
+          >
+            Войти
+          </Link>
+        </div>
       </form>
     </div>
   );
 }
-
-export default RegisterPage;

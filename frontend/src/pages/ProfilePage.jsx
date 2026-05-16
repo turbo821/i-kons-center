@@ -1,15 +1,25 @@
 import { useState } from "react";
-import { User as UserIcon, Lock, Mail, Calendar, Shield } from "lucide-react";
+import {
+  User as UserIcon,
+  Lock,
+  Mail,
+  Calendar,
+  Shield,
+  ChevronDown,
+  ChevronUp,
+} from "lucide-react";
 
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
 import { changePassword } from "../api/userApi";
+import PasswordInput from "../components/PasswordInput";
 
 
 export default function ProfilePage() {
   const { user } = useAuth();
   const toast = useToast();
 
+  const [pwdOpen, setPwdOpen] = useState(false);
   const [form, setForm] = useState({
     current_password: "",
     new_password: "",
@@ -18,6 +28,9 @@ export default function ProfilePage() {
   const [busy, setBusy] = useState(false);
 
   if (!user) return null;
+
+  const change = (key) => (e) =>
+    setForm((f) => ({ ...f, [key]: e.target.value }));
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -37,6 +50,7 @@ export default function ProfilePage() {
       await changePassword(form.current_password, form.new_password);
       toast.success("Пароль успешно изменён");
       setForm({ current_password: "", new_password: "", confirm: "" });
+      setPwdOpen(false);
     } catch (e) {
       toast.error(e?.response?.data?.message || "Ошибка");
     } finally {
@@ -45,24 +59,22 @@ export default function ProfilePage() {
   };
 
   return (
-    <div className="mx-auto max-w-3xl space-y-6">
-      <h1 className="text-2xl font-bold">Профиль</h1>
-
-      {/* Карточка с данными */}
-      <div className="rounded-2xl bg-white p-6 shadow-sm">
-        <div className="mb-6 flex items-center gap-4">
-          <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-blue-100 text-blue-700">
-            <UserIcon size={32} />
-          </div>
-          <div>
-            <h2 className="text-xl font-bold">{user.username}</h2>
-            <p className="text-sm text-slate-500">{user.email}</p>
-          </div>
+    <div className="mx-auto max-w-2xl space-y-6">
+      <div className="text-center">
+        <div className="mx-auto mb-4 inline-flex h-20 w-20 items-center justify-center rounded-2xl bg-slate-900 text-white">
+          <UserIcon size={36} />
         </div>
+        <h1 className="text-2xl font-bold">{user.username}</h1>
+        <p className="text-slate-500">{user.email}</p>
+      </div>
 
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+      {/* Карточка данных */}
+      <div className="rounded-2xl bg-white p-6 shadow-sm">
+        <h2 className="mb-4 font-semibold">Данные учётной записи</h2>
+
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           <InfoRow icon={Mail} label="Email" value={user.email} />
-          <InfoRow icon={UserIcon} label="Имя пользователя" value={user.username} />
+          <InfoRow icon={UserIcon} label="Имя" value={user.username} />
           <InfoRow
             icon={Calendar}
             label="Дата регистрации"
@@ -80,7 +92,7 @@ export default function ProfilePage() {
                 {user.roles?.map((r) => (
                   <span
                     key={r}
-                    className="rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700"
+                    className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700"
                   >
                     {r}
                   </span>
@@ -91,51 +103,75 @@ export default function ProfilePage() {
         </div>
       </div>
 
-      {/* Смена пароля */}
-      <div className="rounded-2xl bg-white p-6 shadow-sm">
-        <div className="mb-4 flex items-center gap-2">
-          <Lock size={18} className="text-slate-600" />
-          <h2 className="font-semibold">Смена пароля</h2>
-        </div>
+      {/* Смена пароля — сворачиваемая */}
+      <div className="rounded-2xl bg-white shadow-sm">
+        <button
+          onClick={() => setPwdOpen((o) => !o)}
+          className="flex w-full items-center justify-between p-6 text-left"
+        >
+          <div className="flex items-center gap-3">
+            <Lock size={18} className="text-slate-600" />
+            <span className="font-semibold">Смена пароля</span>
+          </div>
+          {pwdOpen ? (
+            <ChevronUp size={18} className="text-slate-500" />
+          ) : (
+            <ChevronDown size={18} className="text-slate-500" />
+          )}
+        </button>
 
-        <form onSubmit={handleSubmit} className="max-w-md space-y-3">
-          <Field
-            label="Текущий пароль"
-            type="password"
-            value={form.current_password}
-            onChange={(e) =>
-              setForm((f) => ({ ...f, current_password: e.target.value }))
-            }
-            required
-          />
-          <Field
-            label="Новый пароль"
-            type="password"
-            value={form.new_password}
-            onChange={(e) =>
-              setForm((f) => ({ ...f, new_password: e.target.value }))
-            }
-            required
-            minLength={6}
-          />
-          <Field
-            label="Подтверждение"
-            type="password"
-            value={form.confirm}
-            onChange={(e) =>
-              setForm((f) => ({ ...f, confirm: e.target.value }))
-            }
-            required
-          />
-
-          <button
-            type="submit"
-            disabled={busy}
-            className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+        {pwdOpen && (
+          <form
+            onSubmit={handleSubmit}
+            className="border-t border-slate-100 p-6 pt-4"
           >
-            {busy ? "Сохранение..." : "Сменить пароль"}
-          </button>
-        </form>
+            <div className="mx-auto max-w-sm space-y-3">
+              <Field
+                label="Текущий пароль"
+                value={form.current_password}
+                onChange={change("current_password")}
+                required
+              />
+              <Field
+                label="Новый пароль"
+                value={form.new_password}
+                onChange={change("new_password")}
+                required
+                minLength={6}
+              />
+              <Field
+                label="Подтверждение"
+                value={form.confirm}
+                onChange={change("confirm")}
+                required
+              />
+
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPwdOpen(false);
+                    setForm({
+                      current_password: "",
+                      new_password: "",
+                      confirm: "",
+                    });
+                  }}
+                  className="flex-1 rounded-lg px-4 py-2 text-sm hover:bg-slate-100"
+                >
+                  Отмена
+                </button>
+                <button
+                  type="submit"
+                  disabled={busy}
+                  className="flex-1 rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
+                >
+                  {busy ? "Сохранение..." : "Сменить пароль"}
+                </button>
+              </div>
+            </div>
+          </form>
+        )}
       </div>
     </div>
   );
@@ -145,10 +181,10 @@ export default function ProfilePage() {
 function InfoRow({ icon: Icon, label, value }) {
   return (
     <div className="flex items-start gap-3 rounded-xl bg-slate-50 p-3">
-      <Icon size={16} className="mt-0.5 text-slate-500" />
-      <div className="flex-1">
+      <Icon size={16} className="mt-0.5 shrink-0 text-slate-500" />
+      <div className="min-w-0 flex-1">
         <p className="text-xs text-slate-500">{label}</p>
-        <div className="font-medium">{value}</div>
+        <div className="break-words font-medium">{value}</div>
       </div>
     </div>
   );
@@ -159,10 +195,7 @@ function Field({ label, ...props }) {
   return (
     <div>
       <label className="mb-1 block text-sm font-medium">{label}</label>
-      <input
-        {...props}
-        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-      />
+      <PasswordInput {...props} />
     </div>
   );
 }
