@@ -17,7 +17,7 @@ class Dataset(db.Model):
         nullable=False
     )
 
-    name = db.Column(db.String(150), nullable=False)
+    name = db.Column(db.String(200), nullable=False)
 
     # Имя поля 'query' зарезервировано Flask-SQLAlchemy для Model.query —
     # используем sql_query, чтобы избежать конфликта.
@@ -47,17 +47,33 @@ class Dataset(db.Model):
     )
 
     def to_dict(self, include_fields=False):
+        # Считаем зависимые сущности — для определения, можно ли редактировать
+        metrics_count = sum(len(f.metrics) for f in self.fields)
+        dimensions_count = sum(len(f.dimensions) for f in self.fields)
+
         data = {
             "id": self.id,
-            "datasource_id": self.datasource_id,
             "name": self.name,
-            "query": self.sql_query,  # для API оставляем имя 'query'
+            "datasource_id": self.datasource_id,
+            "datasource_name": (
+                self.datasource.name if self.datasource else None
+            ),
+            "datasource_category_name": (
+                self.datasource.category.name
+                if self.datasource and self.datasource.category else None
+            ),
+            "query": self.sql_query,
+            "sql_query": self.sql_query,
+            "fields": [f.to_dict() for f in self.fields],
+            "widgets_count": len(self.widgets),
+            "metrics_count": metrics_count,
+            "dimensions_count": dimensions_count,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
         if include_fields:
             data["fields"] = [f.to_dict() for f in self.fields]
+        
         return data
-
 
 class DatasetField(db.Model):
     """
@@ -74,7 +90,7 @@ class DatasetField(db.Model):
         nullable=False
     )
 
-    name = db.Column(db.String(150), nullable=False)
+    name = db.Column(db.String(200), nullable=False)
 
     data_type = db.Column(db.String(50), nullable=False)
 

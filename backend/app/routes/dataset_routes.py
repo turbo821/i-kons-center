@@ -207,3 +207,59 @@ def refresh_dataset_fields(dataset_id):
     db.session.commit()
 
     return jsonify(dataset.to_dict(include_fields=True))
+
+@dataset_bp.route("/<int:ds_id>", methods=["PUT"])
+@role_required(*EDITOR_ROLES)
+def update_dataset(ds_id):
+    """
+    Body:
+    {
+      "name": "...",
+      "query": "SELECT ..."   (опционально, только для SQL-источников)
+    }
+    Если query изменился, поля датасета будут переопределены.
+    Запрещено редактировать, если есть зависимые виджеты или метрики.
+    """
+    dataset = db.session.get(Dataset, ds_id)
+    if dataset is None:
+        return jsonify({"message": "Не найдено"}), 404
+
+    # Защита: нельзя менять датасет, если есть зависимые виджеты или метрики
+    has_widgets = len(dataset.widgets) > 0 if hasattr(dataset, "widgets") else False
+    has_metrics = any(f.metrics for f in dataset.fields)
+    has_dimensions = any(f.dimensions for f in dataset.fields)
+
+    if has_widgets or has_metrics or has_dimensions:
+        return jsonify({
+            "message": (
+                "Нельзя редактировать: к набору данных привязаны "
+                "виджеты, метрики или измерения"
+            )
+        }), 409
+
+    data = request.json or {}
+
+    if "name" in data:
+        if not data["name"]:
+            return jsonify({"message": "Имя не может быть пустым"}), 400
+        dataset.name = data["name"]
+
+    if "query" in data and dataset.datasource.type != "csv":
+        if not data["query"]:
+            return jsonify({"message": "query не может быть пустым"}), 400
+        dataset.sql_query = data["query"]
+
+        # Переопределяем поля
+        for f in list(dataset.fields):
+            db.session.delete(f)
+        db.session.flush()
+        try:
+            ds_service.inspect_dataset(dataset.datasource, data["query"])
+        except (ValueError, OSError, KeyError) as e:
+            db.session.rollback()
+            return jsonify({
+                "message": f"Не удалось определить поля: {e}"
+            }), 400
+
+    db.session.commit()
+    return jsonify(dataset.to_dict(include_fields=True))
