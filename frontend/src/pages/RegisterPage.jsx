@@ -70,7 +70,7 @@ function RegisterPage() {
         <button
           type="submit"
           disabled={busy}
-          className="w-full bg-green-600 text-white py-2 rounded-lg hover:bg-green-500 transition disabled:opacity-50"
+          className="w-full bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-500 transition disabled:opacity-50"
         >
           {busy ? "Регистрация..." : "Зарегистрироваться"}
         </button>
