@@ -14,7 +14,7 @@ from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required
 
 from app.database.db import db
-from app.models import KPI, Category, Metric
+from app.models import KPI, KPICategory, Metric
 from app.auth.decorators import role_required
 from app.services.kpi_service import calculate_kpi_value
 
@@ -40,7 +40,7 @@ def _validate_payload(data: dict) -> str | None:
 
     # Проверка ссылочной целостности
     if data.get("category_id"):
-        if not db.session.get(Category, data["category_id"]):
+        if not db.session.get(KPICategory, data["category_id"]):
             return f"Категория id={data['category_id']} не найдена"
 
     if data.get("metric_id"):

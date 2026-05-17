@@ -8,6 +8,7 @@ from flask_jwt_extended import jwt_required, get_jwt_identity
 from app.database.db import db
 from app.models import (
     Dashboard,
+    DashboardCategory,
     Widget,
     DashboardWidget,
     KPI,
@@ -24,7 +25,11 @@ EDITOR_ROLES = ("admin", "expert")
 @dashboard_bp.route("", methods=["GET"])
 @jwt_required()
 def list_dashboards():
-    items = db.session.query(Dashboard).order_by(Dashboard.created_at.desc()).all()
+    q = db.session.query(Dashboard)
+    category_id = request.args.get("category_id", type=int)
+    if category_id is not None:
+        q = q.filter_by(category_id=category_id)
+    items = q.order_by(Dashboard.created_at.desc()).all()
     return jsonify([d.to_dict() for d in items])
 
 
@@ -36,11 +41,18 @@ def create_dashboard():
     if not data.get("name"):
         return jsonify({"message": "Поле 'name' обязательно"}), 400
 
+    category_id = data.get("category_id")
+    if category_id and not db.session.get(DashboardCategory, category_id):
+        return jsonify({
+            "message": f"Категория id={category_id} не найдена"
+        }), 400
+
     user_id = int(get_jwt_identity())
 
     dashboard = Dashboard(
         name=data["name"],
         description=data.get("description"),
+        category_id=category_id,
         created_by=user_id,
     )
     db.session.add(dashboard)
@@ -74,6 +86,14 @@ def update_dashboard(dashboard_id):
 
     if "description" in data:
         dashboard.description = data["description"]
+
+    if "category_id" in data:
+        cat = data["category_id"]
+        if cat and not db.session.get(DashboardCategory, cat):
+            return jsonify({
+                "message": f"Категория id={cat} не найдена"
+            }), 400
+        dashboard.category_id = cat
 
     db.session.commit()
     return jsonify(dashboard.to_dict())

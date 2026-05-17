@@ -30,7 +30,7 @@ __all__ = [
     "Dimension", "WidgetDimension",
     "Filter",
     "Dashboard", "Widget", "DashboardWidget",
-    "Category", "KPI", "DashboardKPI",
+    "KPI", "DashboardKPI",
     "DataSourceCategory", "DashboardCategory", 
     "WidgetCategory", "KPICategory",
 ]

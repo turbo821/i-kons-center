@@ -16,7 +16,7 @@ from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 
 from app.database.db import db
-from app.models import DataSource
+from app.models import DataSource, DataSourceCategory
 from app.auth.decorators import role_required
 from app.services import datasource_service as ds_service
 
@@ -39,7 +39,11 @@ EDITOR_ROLES = ("admin", "expert")
 @jwt_required()
 def list_datasources():
     """Просматривать список источников могут все авторизованные."""
-    items = DataSource.query.order_by(DataSource.created_at.desc()).all()
+    q = DataSource.query
+    category_id = request.args.get("category_id", type=int)
+    if category_id is not None:
+        q = q.filter_by(category_id=category_id)
+    items = q.order_by(DataSource.created_at.desc()).all()
     return jsonify([d.to_dict() for d in items])
 
 
@@ -75,6 +79,12 @@ def create_sql_datasource():
             "message": "Поддерживаются только типы: postgres, mysql"
         }), 400
 
+    category_id = data.get("category_id")
+    if category_id and not db.session.get(DataSourceCategory, category_id):
+        return jsonify({
+            "message": f"Категория id={category_id} не найдена"
+        }), 400
+
     connection_params = {
         "host": data["host"],
         "port": int(data["port"]),
@@ -89,6 +99,7 @@ def create_sql_datasource():
         name=data["name"],
         type=data["type"],
         connection_string=json.dumps(connection_params),
+        category_id=category_id,
         created_by=user_id,
     )
 
@@ -135,10 +146,18 @@ def upload_file_datasource():
 
     user_id = int(get_jwt_identity())
 
+    category_id = request.form.get("category_id", type=int)
+    if category_id and not db.session.get(DataSourceCategory, category_id):
+        ds_service.remove_file_if_exists(saved_path)
+        return jsonify({
+            "message": f"Категория id={category_id} не найдена"
+        }), 400
+
     ds = DataSource(
         name=request.form.get("name") or file.filename,
         type="csv",
         connection_string=saved_path,
+        category_id=category_id,
         created_by=user_id,
     )
 
@@ -189,6 +208,165 @@ def delete_datasource(ds_id):
 
     return jsonify({"message": "Удалено"})
 
+@datasource_bp.route("/<int:ds_id>", methods=["PUT"])
+@role_required(*EDITOR_ROLES)
+def update_datasource(ds_id):
+    """Обновление метаданных источника (имя, категория)."""
+    ds = DataSource.query.get_or_404(ds_id)
+    data = request.json or {}
+
+    if "name" in data:
+        if not data["name"]:
+            return jsonify({"message": "Имя не может быть пустым"}), 400
+        ds.name = data["name"]
+
+    if "category_id" in data:
+        new_cat = data["category_id"]
+        if new_cat and not db.session.get(DataSourceCategory, new_cat):
+            return jsonify({
+                "message": f"Категория id={new_cat} не найдена"
+            }), 400
+        ds.category_id = new_cat
+
+    db.session.commit()
+    return jsonify(ds.to_dict())
+
+# ---------------------------------------------------------------------------
+# REPLACE FILE — замена файла CSV/Excel
+# ---------------------------------------------------------------------------
+@datasource_bp.route("/<int:ds_id>/replace-file", methods=["POST"])
+@role_required(*EDITOR_ROLES)
+def replace_file(ds_id):
+    ds = DataSource.query.get_or_404(ds_id)
+
+    if ds.type != "csv":
+        return jsonify({
+            "message": "Замена файла доступна только для CSV/Excel-источников"
+        }), 400
+
+    if "file" not in request.files:
+        return jsonify({"message": "Файл не передан"}), 400
+
+    file = request.files["file"]
+    if not file.filename:
+        return jsonify({"message": "Файл не выбран"}), 400
+
+    if not ds_service.is_allowed_file(file.filename):
+        return jsonify({
+            "message": "Поддерживаются только файлы CSV, XLS, XLSX"
+        }), 400
+
+    # Собираем существующие имена полей всех датасетов
+    required_fields_by_ds = {
+        d.id: {f.name for f in d.fields} for d in ds.datasets
+    }
+
+    # Сохраняем новый файл во временное место
+    try:
+        new_path = ds_service.save_uploaded_file(file)
+    except (OSError, ValueError) as e:
+        return jsonify({"message": f"Ошибка сохранения: {e}"}), 400
+
+    # Проверяем, что новый файл читается и содержит все необходимые столбцы
+    old_path = ds.connection_string
+    ds.connection_string = new_path
+
+    try:
+        # Для каждого датасета пытаемся получить актуальную структуру
+        import pandas as pd
+        new_df = (
+            pd.read_csv(new_path) if new_path.lower().endswith(".csv")
+            else pd.read_excel(new_path)
+        )
+        new_columns = set(new_df.columns)
+
+        problems = []
+        for ds_id, required in required_fields_by_ds.items():
+            missing = required - new_columns
+            if missing:
+                problems.append(
+                    f"набор данных id={ds_id} требует столбцы: "
+                    f"{', '.join(missing)}"
+                )
+
+        if problems:
+            ds.connection_string = old_path
+            ds_service.remove_file_if_exists(new_path)
+            return jsonify({
+                "message": "Новый файл несовместим:\n" + "\n".join(problems)
+            }), 400
+
+    except (ValueError, OSError, ImportError) as e:
+        ds.connection_string = old_path
+        ds_service.remove_file_if_exists(new_path)
+        return jsonify({"message": f"Не удалось прочитать файл: {e}"}), 400
+
+    # Всё хорошо — удаляем старый файл
+    ds_service.remove_file_if_exists(old_path)
+    db.session.commit()
+
+    return jsonify({"message": "Файл обновлён", "datasource": ds.to_dict()})
+
+
+# ---------------------------------------------------------------------------
+# UPDATE CONNECTION — обновление SQL-соединения
+# ---------------------------------------------------------------------------
+@datasource_bp.route("/<int:ds_id>/connection", methods=["PUT"])
+@role_required(*EDITOR_ROLES)
+def update_connection(ds_id):
+    ds = DataSource.query.get_or_404(ds_id)
+
+    if ds.type not in ("postgres", "mysql"):
+        return jsonify({
+            "message": "Обновление соединения доступно только для SQL-источников"
+        }), 400
+
+    data = request.json or {}
+    required = ("host", "port", "database", "user", "password")
+    missing = [f for f in required if f not in data]
+    if missing:
+        return jsonify({
+            "message": f"Не заданы поля: {', '.join(missing)}"
+        }), 400
+
+    new_connection = {
+        "host": data["host"],
+        "port": int(data["port"]),
+        "database": data["database"],
+        "user": data["user"],
+        "password": data["password"],
+    }
+
+    # Сохраняем старое значение, чтобы откатить при ошибке
+    old_connection = ds.connection_string
+    ds.connection_string = json.dumps(new_connection)
+
+    # Проверка подключения
+    ok, msg = ds_service.test_connection(ds)
+    if not ok:
+        ds.connection_string = old_connection
+        return jsonify({
+            "message": f"Не удалось подключиться: {msg}"
+        }), 400
+
+    # Проверка доступности таблиц существующих датасетов
+    try:
+        for d in ds.datasets:
+            ds_service.read_dataset(d.datasource, query=d.sql_query, limit=1)
+    except (ValueError, OSError, KeyError) as e:
+        ds.connection_string = old_connection
+        return jsonify({
+            "message": (
+                f"Таблицы существующих датасетов недоступны "
+                f"в новом подключении: {e}"
+            )
+        }), 400
+
+    db.session.commit()
+    return jsonify({
+        "message": "Соединение обновлено",
+        "datasource": ds.to_dict()
+    })
 
 # ---------------------------------------------------------------------------
 # TEST CONNECTION

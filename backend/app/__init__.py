@@ -15,11 +15,16 @@ from app.routes.metric_routes import metric_bp
 from app.routes.dimension_routes import dimension_bp
 from app.routes.widget_routes import widget_bp
 from app.routes.dashboard_routes import dashboard_bp
-from app.routes.category_routes import category_bp
 from app.routes.kpi_routes import kpi_bp
 from app.routes.user_routes import user_bp
 from app.routes.stats_routes import stats_bp
 
+from app.routes.category_routes import (
+    datasource_category_bp,
+    widget_category_bp,
+    dashboard_category_bp,
+    kpi_category_bp,
+)
 
 jwt = JWTManager()
 migrate = Migrate()
@@ -42,9 +47,13 @@ def create_app():
     app.register_blueprint(dimension_bp)
     app.register_blueprint(widget_bp)
     app.register_blueprint(dashboard_bp)
-    app.register_blueprint(category_bp)
     app.register_blueprint(kpi_bp)
     app.register_blueprint(user_bp)
     app.register_blueprint(stats_bp)
+
+    app.register_blueprint(datasource_category_bp)
+    app.register_blueprint(widget_category_bp)
+    app.register_blueprint(dashboard_category_bp)
+    app.register_blueprint(kpi_category_bp)
 
     return app

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { Plus, LayoutDashboard, Trash2 } from "lucide-react";
+import { Plus, LayoutDashboard, Trash2, FolderTree } from "lucide-react";
 
 import {
   listDashboards,
@@ -14,6 +14,9 @@ import { useConfirm } from "../context/ConfirmContext";
 import Modal from "../components/Modal";
 import ListToolbar, { applySort, matchesSearch } from "../components/ListToolbar";
 
+import { dashboardCategoryApi } from "../api/categoryApi";
+import CategoriesModal from "../components/CategoriesModal";
+import CategoryFilterChips from "../components/CategoryFilterChips";
 
 const SORT_OPTIONS = [
   { value: "created_desc", label: "Сначала новые" },
@@ -43,11 +46,21 @@ export default function DashboardsPage() {
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState("created_desc");
 
+  const [categories, setCategories] = useState([]);
+  const [filterCategory, setFilterCategory] = useState(undefined);
+  const [categoriesOpen, setCategoriesOpen] = useState(false);
+  
   const load = async () => {
     setLoading(true);
+
     try {
-      const { data } = await listDashboards();
-      setItems(data);
+      const [itemsRes, catsRes] = await Promise.all([
+        listDashboards(),
+        dashboardCategoryApi.list(),
+      ]);
+
+      setItems(itemsRes.data);
+      setCategories(catsRes.data);
     } catch (e) {
       toast.error("Не удалось загрузить дашборды");
     } finally {
@@ -61,7 +74,11 @@ export default function DashboardsPage() {
   }, []);
 
   const filtered = useMemo(() => {
-    let result = items.filter((i) =>
+    let result = items;
+    if (filterCategory !== undefined) {
+      result = result.filter((i) => i.category_id === filterCategory);
+    }
+    result = result.filter((i) =>
       matchesSearch(i, search, ["name", "description"])
     );
     return applySort(result, sort, SORT_MAP);
@@ -93,13 +110,23 @@ export default function DashboardsPage() {
         </div>
 
         {canEdit && (
-          <button
-            onClick={() => setCreateOpen(true)}
-            className="flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
-          >
-            <Plus size={18} />
-            Создать дашборд
-          </button>
+          <div className="flex gap-3">
+            <button
+              onClick={() => setCategoriesOpen(true)}
+              className="flex items-center gap-2 rounded-xl bg-slate-100 px-4 py-2 text-sm font-medium hover:bg-slate-200"
+            >
+              <FolderTree size={16} />
+              Категории
+            </button>
+
+            <button
+              onClick={() => setCreateOpen(true)}
+              className="flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
+            >
+              <Plus size={18} />
+              Создать дашборд
+            </button>
+          </div>
         )}
       </div>
 
@@ -111,6 +138,20 @@ export default function DashboardsPage() {
         onSortChange={setSort}
         sortOptions={SORT_OPTIONS}
       />
+
+      {categories.length > 0 && (
+        <CategoryFilterChips
+          categories={categories}
+          value={filterCategory}
+          onChange={setFilterCategory}
+          getCountForCategory={(catId) =>
+            catId === null
+              ? items.filter((i) => !i.category_id).length
+              : items.filter((i) => i.category_id === catId).length
+          }
+          totalCount={items.length}
+        />
+      )}
 
       {loading && <p className="text-slate-500">Загрузка...</p>}
 
@@ -142,6 +183,11 @@ export default function DashboardsPage() {
                         {item.description}
                       </p>
                     )}
+                  {item.category_name && (
+                    <p className="mt-1 inline-block rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-600">
+                      {item.category_name}
+                    </p>
+                  )}
                   </div>
                 </div>
               </Link>
@@ -168,24 +214,52 @@ export default function DashboardsPage() {
         open={createOpen}
         onClose={() => setCreateOpen(false)}
         onCreated={load}
+        categories={categories}
+      />
+
+      <CategoriesModal
+        open={categoriesOpen}
+        onClose={() => setCategoriesOpen(false)}
+        title="Категории дашбордов"
+        categories={categories}
+        api={dashboardCategoryApi}
+        onChanged={load}
       />
     </div>
   );
 }
 
 
-function CreateDashboardModal({ open, onClose, onCreated }) {
+function CreateDashboardModal({
+  open,
+  onClose,
+  onCreated,
+  categories,
+}) {
   const toast = useToast();
-  const [form, setForm] = useState({ name: "", description: "" });
+  const [form, setForm] = useState({
+    name: "",
+    description: "",
+    category_id: "",
+  });
   const [busy, setBusy] = useState(false);
 
   const submit = async (e) => {
     e.preventDefault();
     setBusy(true);
     try {
-      await createDashboard(form);
+      await createDashboard({
+        ...form,
+        category_id: form.category_id
+          ? Number(form.category_id)
+          : null,
+      });
       toast.success("Дашборд создан");
-      setForm({ name: "", description: "" });
+      setForm({
+        name: "",
+        description: "",
+        category_id: "",
+      });
       onClose();
       onCreated();
     } catch (e) {
@@ -221,6 +295,31 @@ function CreateDashboardModal({ open, onClose, onCreated }) {
             }
             className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
           />
+        </div>
+
+        <div>
+          <label className="mb-1 block text-sm font-medium">
+            Категория
+          </label>
+
+          <select
+            value={form.category_id}
+            onChange={(e) =>
+              setForm((f) => ({
+                ...f,
+                category_id: e.target.value,
+              }))
+            }
+            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+          >
+            <option value="">— без категории —</option>
+
+            {categories.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
         </div>
 
         <div className="flex justify-end gap-2 pt-2">

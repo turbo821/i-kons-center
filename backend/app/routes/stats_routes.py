@@ -138,4 +138,20 @@ def global_search():
             "url": f"/datasources/{ds.id}",
         })
 
+    # Наборы данных
+    from app.models import Dataset
+    datasets = (
+        db.session.query(Dataset)
+        .filter(Dataset.name.ilike(pattern))
+        .limit(limit).all()
+    )
+    for d in datasets:
+        results.append({
+            "kind": "dataset",
+            "id": d.id,
+            "title": d.name,
+            "subtitle": d.datasource.name if d.datasource else "",
+            "url": f"/datasources/{d.datasource_id}",
+        })
+
     return jsonify({"results": results, "query": q})

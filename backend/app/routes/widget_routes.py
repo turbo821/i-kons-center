@@ -18,6 +18,7 @@ from flask_jwt_extended import jwt_required
 from app.database.db import db
 from app.models import (
     Widget,
+    WidgetCategory,
     Dataset,
     Metric,
     Dimension,
@@ -101,6 +102,7 @@ def list_widgets():
     по dashboard_id — вернутся виджеты, размещённые на дашборде.
     """
     dashboard_id = request.args.get("dashboard_id", type=int)
+    category_id = request.args.get("category_id", type=int)
 
     if dashboard_id is not None:
         # Виджеты, размещённые на дашборде (через DashboardWidget)
@@ -111,7 +113,10 @@ def list_widgets():
             .all()
         )
     else:
-        items = db.session.query(Widget).order_by(Widget.id.desc()).all()
+        q = db.session.query(Widget)
+        if category_id is not None:
+            q = q.filter_by(category_id=category_id)
+        items = q.order_by(Widget.id.desc()).all()
 
     return jsonify([w.to_dict() for w in items])
 
@@ -151,6 +156,11 @@ def create_widget():
     if not db.session.get(Dataset, data["dataset_id"]):
         return jsonify({"message": "Датасет не найден"}), 404
 
+    category_id = data.get("category_id")
+    if category_id and not db.session.get(WidgetCategory, category_id):
+        return jsonify({
+            "message": f"Категория id={category_id} не найдена"
+        }), 400
     metrics, err = _resolve_metrics(data.get("metric_ids") or [])
     if err:
         return jsonify({"message": err}), 400
@@ -163,6 +173,7 @@ def create_widget():
         dataset_id=data["dataset_id"],
         title=data["title"],
         type=data["type"],
+        category_id=category_id,
     )
     widget.metrics = metrics
     widget.dimensions = dimensions
@@ -208,6 +219,14 @@ def update_widget(widget_id):
             if field == "type" and data[field] not in ALLOWED_WIDGET_TYPES:
                 return jsonify({"message": "Недопустимый тип"}), 400
             setattr(widget, field, data[field])
+
+    if "category_id" in data:
+        cat = data["category_id"]
+        if cat and not db.session.get(WidgetCategory, cat):
+            return jsonify({
+                "message": f"Категория id={cat} не найдена"
+            }), 400
+        widget.category_id = cat
 
     if "metric_ids" in data:
         metrics, err = _resolve_metrics(data["metric_ids"])

@@ -11,6 +11,7 @@ import {
   PieChart as PieIcon,
   Table as TableIcon,
   Hash,
+  Info
 } from "lucide-react";
 
 import { listDatasets, getDataset } from "../api/datasetApi";
@@ -61,6 +62,7 @@ const FILTER_OPERATORS = [
 
 
 export default function WidgetBuilderPage() {
+  const [showDsHelp, setShowDsHelp] = useState(false);
   const { widgetId } = useParams();
   const navigate = useNavigate();
   const toast = useToast();
@@ -334,7 +336,28 @@ export default function WidgetBuilderPage() {
 
         <div className="space-y-4">
 
-          <Section title="Источник данных">
+          <Section
+            title={
+              <div className="flex items-center gap-1">
+                <span>Источник данных</span>
+                <button
+                  type="button"
+                  onMouseEnter={() => setShowDsHelp(true)}
+                  onMouseLeave={() => setShowDsHelp(false)}
+                  className="relative rounded p-0.5 text-slate-400 hover:text-slate-700"
+                  aria-label="Подсказка по формату отображения данных"
+                >
+                  <Info size={14} />
+                  {showDsHelp && (
+                    <div className="absolute bottom-full left-0 z-10 mb-1 w-96 rounded-lg border border-slate-200 bg-slate-900 p-3 text-left text-xs text-white shadow-lg">
+                      <pre className="whitespace-pre-wrap break-words font-mono text-xs">
+                        категория/источник данных/набор данных
+                      </pre>
+                    </div>
+                  )}
+                </button>
+              </div>
+            } >
             <select
               value={datasetId || ""}
               onChange={(e) => {
@@ -349,7 +372,10 @@ export default function WidgetBuilderPage() {
               <option value="">— выберите набор данных —</option>
               {datasets.map((d) => (
                 <option key={d.id} value={d.id}>
-                  {d.name}
+                  {d.datasource_category_name 
+                    ? `${d.datasource_category_name}/` 
+                    : ''}
+                  {d.datasource_name}/{d.name}
                 </option>
               ))}
             </select>

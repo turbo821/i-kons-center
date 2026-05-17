@@ -12,11 +12,9 @@ import {
   updateKpi,
   deleteKpi,
 } from "../api/kpiApi";
-import {
-  listCategories,
-  createCategory,
-  deleteCategory,
-} from "../api/categoryApi";
+import { kpiCategoryApi } from "../api/categoryApi";
+import CategoriesModal from "../components/CategoriesModal";
+import CategoryFilterChips from "../components/CategoryFilterChips";
 import { listMetrics, createMetric } from "../api/metricApi";
 import { listDatasets, getDataset } from "../api/datasetApi";
 
@@ -64,7 +62,7 @@ export default function KpiPage() {
 
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState("created_desc");
-  const [filterCategory, setFilterCategory] = useState(null);
+  const [filterCategory, setFilterCategory] = useState(undefined);
   const [filterDirection, setFilterDirection] = useState(null);
 
   const [editorOpen, setEditorOpen] = useState(false);
@@ -76,7 +74,7 @@ export default function KpiPage() {
     try {
       const [kpiRes, catRes] = await Promise.all([
         listKpis(),
-        listCategories(),
+        kpiCategoryApi.list(),
       ]);
       setKpis(kpiRes.data);
       setCategories(catRes.data);
@@ -94,7 +92,9 @@ export default function KpiPage() {
 
   const filteredKpis = useMemo(() => {
     let result = kpis;
-    if (filterCategory) result = result.filter((k) => k.category_id === filterCategory);
+    if (filterCategory !== undefined) {
+      result = result.filter((k) => k.category_id === filterCategory);
+    }
     if (filterDirection) result = result.filter((k) => k.direction === filterDirection);
     result = result.filter((k) =>
       matchesSearch(k, search, ["name", "description", "category_name"])
@@ -166,56 +166,45 @@ export default function KpiPage() {
         sortValue={sort}
         onSortChange={setSort}
         sortOptions={SORT_OPTIONS}
-      />
-
-      {/* Фильтр по категориям */}
-      {categories.length > 0 && (
+      >
+        {/* Фильтр по направлению */}
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs font-medium text-slate-500">Категория:</span>
           <FilterChip
-            active={filterCategory === null}
-            onClick={() => setFilterCategory(null)}
+            active={filterDirection === null}
+            onClick={() => setFilterDirection(null)}
           >
-            Все ({kpis.length})
+            Все
           </FilterChip>
-          {categories.map((c) => {
-            const count = kpis.filter((k) => k.category_id === c.id).length;
-            if (count === 0) return null;
-            return (
-              <FilterChip
-                key={c.id}
-                active={filterCategory === c.id}
-                onClick={() => setFilterCategory(c.id)}
-              >
-                {c.name} ({count})
-              </FilterChip>
-            );
-          })}
+          <FilterChip
+            active={filterDirection === "higher_better"}
+            onClick={() => setFilterDirection("higher_better")}
+          >
+            ↑ Больше — лучше
+          </FilterChip>
+          <FilterChip
+            active={filterDirection === "lower_better"}
+            onClick={() => setFilterDirection("lower_better")}
+          >
+            ↓ Меньше — лучше
+          </FilterChip>
         </div>
+      </ListToolbar>
+
+      {categories.length > 0 && (
+        <CategoryFilterChips
+          categories={categories}
+          value={filterCategory}
+          onChange={setFilterCategory}
+          getCountForCategory={(catId) =>
+            catId === null
+              ? kpis.filter((k) => !k.category_id).length
+              : kpis.filter((k) => k.category_id === catId).length
+          }
+          totalCount={kpis.length}
+        />
       )}
 
-      {/* Фильтр по направлению */}
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-xs font-medium text-slate-500">Направление:</span>
-        <FilterChip
-          active={filterDirection === null}
-          onClick={() => setFilterDirection(null)}
-        >
-          Все
-        </FilterChip>
-        <FilterChip
-          active={filterDirection === "higher_better"}
-          onClick={() => setFilterDirection("higher_better")}
-        >
-          ↑ Больше — лучше
-        </FilterChip>
-        <FilterChip
-          active={filterDirection === "lower_better"}
-          onClick={() => setFilterDirection("lower_better")}
-        >
-          ↓ Меньше — лучше
-        </FilterChip>
-      </div>
+
 
       {loading && <p className="text-slate-500">Загрузка...</p>}
 
@@ -262,12 +251,14 @@ export default function KpiPage() {
         onSaved={load}
       />
 
-      <CategoriesModal
-        open={categoriesOpen}
-        onClose={() => setCategoriesOpen(false)}
-        categories={categories}
-        onChanged={load}
-      />
+    <CategoriesModal
+      open={categoriesOpen}
+      onClose={() => setCategoriesOpen(false)}
+      title="Категории KPI"
+      categories={categories}
+      api={kpiCategoryApi}
+      onChanged={load}
+    />
     </div>
   );
 }
@@ -666,107 +657,6 @@ function KpiEditorModal({ open, onClose, editingKpi, categories, onSaved }) {
     </Modal>
   );
 }
-
-
-function CategoriesModal({ open, onClose, categories, onChanged }) {
-  const toast = useToast();
-  const confirm = useConfirm();
-  const [newName, setNewName] = useState("");
-  const [newDesc, setNewDesc] = useState("");
-  const [busy, setBusy] = useState(false);
-
-  const handleAdd = async (e) => {
-    e.preventDefault();
-    if (!newName) return;
-    setBusy(true);
-    try {
-      await createCategory({ name: newName, description: newDesc });
-      setNewName("");
-      setNewDesc("");
-      toast.success("Категория создана");
-      onChanged();
-    } catch (e) {
-      toast.error(e?.response?.data?.message || "Ошибка");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const handleDelete = async (cat) => {
-    const ok = await confirm({
-      title: "Удалить категорию?",
-      body: `«${cat.name}» будет удалена.`,
-      confirmText: "Удалить",
-      danger: true,
-    });
-    if (!ok) return;
-    try {
-      await deleteCategory(cat.id);
-      toast.success("Категория удалена");
-      onChanged();
-    } catch (e) {
-      toast.error(e?.response?.data?.message || "Ошибка");
-    }
-  };
-
-  return (
-    <Modal
-      open={open}
-      onClose={onClose}
-      title="Категории KPI"
-      maxWidth="max-w-lg"
-    >
-      <div className="space-y-4">
-        <form onSubmit={handleAdd} className="space-y-2">
-          <Input
-            placeholder="Название категории"
-            value={newName}
-            onChange={(e) => setNewName(e.target.value)}
-            required
-          />
-          <Input
-            placeholder="Описание (опционально)"
-            value={newDesc}
-            onChange={(e) => setNewDesc(e.target.value)}
-          />
-          <button
-            type="submit"
-            disabled={busy || !newName}
-            className="w-full rounded-lg bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
-          >
-            Добавить
-          </button>
-        </form>
-
-        <div className="space-y-2">
-          {categories.length === 0 && (
-            <p className="text-sm text-slate-500">Пока нет категорий</p>
-          )}
-          {categories.map((c) => (
-            <div
-              key={c.id}
-              className="flex items-center justify-between rounded-lg border border-slate-200 p-3"
-            >
-              <div>
-                <p className="font-medium">{c.name}</p>
-                {c.description && (
-                  <p className="text-xs text-slate-500">{c.description}</p>
-                )}
-              </div>
-              <button
-                onClick={() => handleDelete(c)}
-                className="rounded-lg p-1.5 text-red-600 hover:bg-red-50"
-              >
-                <Trash2 size={14} />
-              </button>
-            </div>
-          ))}
-        </div>
-      </div>
-    </Modal>
-  );
-}
-
 
 const Label = ({ children }) => (
   <label className="mb-1 block text-sm font-medium">{children}</label>
