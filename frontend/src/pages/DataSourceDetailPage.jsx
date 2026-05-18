@@ -870,6 +870,18 @@ function UpdateConnectionModal({ open, onClose, datasource, onUpdated }) {
 
 
 // ----- Предпросмотр -----
+function formatCellValue(val) {
+  if (val === null || val === undefined) {
+    return "—";
+  }
+  // Проверка на дату
+  const date = new Date(val);
+  if (!isNaN(date.getTime()) && typeof val === "string") {
+    return date.toLocaleDateString("ru-RU");
+  }
+  return String(val);
+}
+
 function PreviewModal({ state, onClose }) {
   if (!state) return null;
 
@@ -891,16 +903,16 @@ function PreviewModal({ state, onClose }) {
               ))}
             </tr>
           </thead>
+
           <tbody>
             {state.rows.map((row, i) => (
               <tr key={i} className="hover:bg-slate-50">
                 {row.map((val, j) => (
-                  <td key={j} className="border-b px-3 py-2 text-slate-700">
-                    {val === null ? (
-                      <span className="text-slate-400">—</span>
-                    ) : (
-                      String(val)
-                    )}
+                  <td
+                    key={j}
+                    className="border-b px-3 py-2 text-slate-700"
+                  >
+                    {formatCellValue(val)}
                   </td>
                 ))}
               </tr>
