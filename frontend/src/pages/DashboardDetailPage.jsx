@@ -55,7 +55,6 @@ const KEY_TEXT = "t";
 
 
 // Размеры шрифта текстового блока — токены, синхронизированы с бэкендом.
-// Tailwind-классы выбраны так, чтобы соответствовать стандартной шкале text-*.
 const FONT_SIZES = [
   { value: "sm", label: "Маленький", cls: "text-sm" },
   { value: "base", label: "Обычный", cls: "text-base" },
@@ -75,6 +74,42 @@ const fontSizeCls = (key) =>
   FONT_SIZES.find((f) => f.value === key)?.cls || FONT_SIZES[1].cls;
 const textAlignCls = (key) =>
   TEXT_ALIGNS.find((a) => a.value === key)?.cls || TEXT_ALIGNS[0].cls;
+
+
+// CSS, временно подмешиваемый перед снимком в PDF.
+// Зачем: на дашборде заголовок виджета — это обычный <p> в DOM, который
+// располагается над SVG-чарта. В нормальном просмотре браузер сглаживает,
+// а html2canvas «склеивает» соседние элементы попиксельно — нижняя строка
+// заголовка иногда оказывается на одной линии с верхом SVG, и при rasterise
+// её обрезает. Поэтому в режиме экспорта мы:
+//   1. Принудительно даём заголовку min-height и нижний padding;
+//   2. Поднимаем z-index, чтобы он точно был "сверху";
+//   3. Сдвигаем чарт recharts вниз на пару пикселей.
+// После снятия снимка стили снимаются.
+const PDF_EXPORT_CSS = `
+  .pdf-exporting .widget-tile-title {
+    min-height: 28px !important;
+    line-height: 1.4 !important;
+    padding-bottom: 6px !important;
+    margin-bottom: 6px !important;
+    position: relative !important;
+    z-index: 5 !important;
+    overflow: visible !important;
+  }
+  .pdf-exporting .widget-tile-title p {
+    overflow: visible !important;
+    text-overflow: clip !important;
+    white-space: normal !important;
+    padding-bottom: 2px !important;
+    line-height: 1.4 !important;
+  }
+  .pdf-exporting .widget-tile-body {
+    padding-top: 4px !important;
+  }
+  .pdf-exporting .widget-tile-body .recharts-wrapper {
+    margin-top: 2px !important;
+  }
+`;
 
 
 export default function DashboardDetailPage() {
@@ -137,8 +172,6 @@ export default function DashboardDetailPage() {
         y: item.position_y,
         w: item.width,
         h: item.height,
-        // Для текста разрешаем «высоту в одну строку» — minH=1, чтобы можно
-        // было ужать блок до короткого заголовка.
         minW: item.kind === "text" ? 2 : 2,
         minH: item.kind === "text" ? 1 : 2,
       };
@@ -221,13 +254,12 @@ export default function DashboardDetailPage() {
     }
   };
 
-  // добавление и удаление текстовых блоков
   const handleAddText = async () => {
     try {
       await addTextToDashboard(id, {
         content: "Новый текст",
         position_x: 0,
-        position_y: 1000, // в самый низ
+        position_y: 1000,
         width: 4,
         height: 2,
         font_size: "base",
@@ -256,9 +288,6 @@ export default function DashboardDetailPage() {
     }
   };
 
-  // Универсальный апдейтер: принимает partial-объект с любым набором полей
-  // (content / font_size / text_align). Локально обновляем сразу, на сервер
-  // шлём один PUT.
   const handleUpdateText = async (textId, patch) => {
     setDashboard((prev) => ({
       ...prev,
@@ -275,7 +304,6 @@ export default function DashboardDetailPage() {
     }
   };
 
-  // Task 6: тоггл закрепления
   const handleTogglePin = async () => {
     try {
       const { data } = await pinDashboard(id, !dashboard.is_pinned);
@@ -287,20 +315,28 @@ export default function DashboardDetailPage() {
   };
 
   // -------------------------------------------------------------------
-  // Экспорт дашборда в PDF
+  // Экспорт в PDF
   //
-  // Главная проблема, которую решаем: html2canvas снимает строго bounding-box
-  // элемента в текущем рендере. У react-grid-layout контейнер имеет высоту,
-  // вычисляемую от позиций элементов, и иногда последний ряд (особенно
-  // подписи под графиками) попадает на самую границу — при scale=2 это
-  // приводит к обрезанию пары пикселей снизу. Чтобы это починить:
-  //  1. Принудительно ставим контейнеру высоту = scrollHeight + запас.
-  //  2. Передаём html2canvas явные width/height и windowHeight с тем же
-  //     запасом — он рендерит viewport нужного размера.
-  //  3. После снимка возвращаем стили обратно.
+  // Особенности:
+  //  - перед снимком инъекцируем стили (PDF_EXPORT_CSS), которые дают
+  //    заголовкам виджетов гарантированный отступ снизу и убирают
+  //    обрезание (overflow:hidden у truncate-параграфа);
+  //  - на контейнере временно ставим класс .pdf-exporting, чтобы
+  //    селекторы стилей сработали;
+  //  - фиксируем высоту контейнера = scrollHeight + запас, чтобы нижние
+  //    подписи не отрезались;
+  //  - после снимка возвращаем всё как было.
   // -------------------------------------------------------------------
   const handleExportPdf = async () => {
     setExportingPdf(true);
+
+    // Поднимаем <style> в head, чтобы CSS-правила применились ко всем
+    // плиткам сразу. Снимаем его сразу после снимка.
+    const styleEl = document.createElement("style");
+    styleEl.setAttribute("data-pdf-export", "1");
+    styleEl.textContent = PDF_EXPORT_CSS;
+    document.head.appendChild(styleEl);
+
     try {
       const node = document.getElementById("grid-container");
       if (!node) {
@@ -313,25 +349,27 @@ export default function DashboardDetailPage() {
         import("jspdf"),
       ]);
 
-      // Запас, чтобы захватить подписи и нижние границы графиков целиком
       const BOTTOM_PAD = 40;
 
-      // Сохраняем исходные inline-стили, чтобы вернуть после снимка
+      // Сохраняем исходные inline-стили
       const prev = {
         height: node.style.height,
         overflow: node.style.overflow,
         paddingBottom: node.style.paddingBottom,
       };
 
-      // Полная высота контейнера со всем содержимым + дополнительный паддинг
+      // Включаем класс «режима экспорта» — CSS подхватится
+      node.classList.add("pdf-exporting");
+
+      // Дать браузеру кадр на применение новых стилей перед измерением высоты
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+
       const fullHeight = node.scrollHeight + BOTTOM_PAD;
 
-      // Фиксируем высоту и убираем возможные скроллы/обрезание дочерних
       node.style.height = `${fullHeight}px`;
       node.style.overflow = "visible";
       node.style.paddingBottom = `${BOTTOM_PAD}px`;
 
-      // Дадим браузеру кадр на перерисовку перед снимком
       await new Promise((resolve) => requestAnimationFrame(resolve));
 
       let canvas;
@@ -347,15 +385,14 @@ export default function DashboardDetailPage() {
           windowHeight: fullHeight,
         });
       } finally {
-        // Возвращаем стили в любом случае
         node.style.height = prev.height;
         node.style.overflow = prev.overflow;
         node.style.paddingBottom = prev.paddingBottom;
+        node.classList.remove("pdf-exporting");
       }
 
       const imgData = canvas.toDataURL("image/png");
 
-      // Альбомная A4, вписываем картинку с сохранением пропорций
       const pdf = new jsPDF({
         orientation: "landscape",
         unit: "pt",
@@ -385,6 +422,8 @@ export default function DashboardDetailPage() {
       console.error(e);
       toast.error("Не удалось создать PDF");
     } finally {
+      // В любом случае снимаем стили
+      if (styleEl.parentNode) styleEl.parentNode.removeChild(styleEl);
       setExportingPdf(false);
     }
   };
@@ -607,6 +646,15 @@ export default function DashboardDetailPage() {
 }
 
 
+// WidgetTile.
+// Структура важна для корректного снимка в PDF:
+//  - корневой div — relative + не используем overflow:hidden,
+//    чтобы заголовок не «обрезался» по пиксельной границе при rasterise;
+//  - заголовок (.widget-tile-title) — shrink-0 + min-h, с явным
+//    padding-bottom — это гарантирует, что под буквами всегда есть
+//    несколько пикселей запаса, которые html2canvas не отрежет;
+//  - область чарта (.widget-tile-body) — flex-1 min-h-0, тоже без
+//    overflow:hidden (recharts сам ограничит SVG своим contentBox).
 function WidgetTile({ item, editMode, canEdit, onRemove }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
@@ -624,20 +672,33 @@ function WidgetTile({ item, editMode, canEdit, onRemove }) {
   const stopDrag = (e) => e.stopPropagation();
 
   return (
-    <div className="flex h-full w-full flex-col rounded-xl border border-slate-200 bg-white p-3">
+    <div className="relative flex h-full w-full flex-col rounded-xl border border-slate-200 bg-white p-3">
       <div
-        className={`mb-2 flex items-center justify-between ${
+        className={`widget-tile-title mb-2 flex shrink-0 items-start justify-between gap-2 pb-1 ${
           editMode ? "widget-drag-handle cursor-move" : ""
         }`}
+        style={{ minHeight: 24 }}
       >
-        <div className="flex flex-1 items-center gap-2 overflow-hidden">
-          <p className="truncate text-sm font-semibold">{item.title}</p>
+        <div className="flex flex-1 items-center gap-2 min-w-0">
+          <p
+            className="text-sm font-semibold leading-snug"
+            style={{
+              display: "-webkit-box",
+              WebkitLineClamp: 2,
+              WebkitBoxOrient: "vertical",
+              overflow: "hidden",
+              wordBreak: "break-word",
+            }}
+            title={item.title}
+          >
+            {item.title}
+          </p>
           {editMode && (
             <Link
               to={`/widgets/${item.ref_id}/edit`}
               onMouseDown={stopDrag}
               onClick={(e) => e.stopPropagation()}
-              className="no-drag rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+              className="no-drag shrink-0 rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
             >
               <Pencil size={12} />
             </Link>
@@ -651,14 +712,14 @@ function WidgetTile({ item, editMode, canEdit, onRemove }) {
               e.stopPropagation();
               onRemove();
             }}
-            className="no-drag rounded p-1 text-red-600 hover:bg-red-50"
+            className="no-drag shrink-0 rounded p-1 text-red-600 hover:bg-red-50"
           >
             <X size={14} />
           </button>
         )}
       </div>
 
-      <div className="flex-1 overflow-hidden">
+      <div className="widget-tile-body relative min-h-0 flex-1">
         <WidgetRenderer
           type={item.type}
           data={data}
@@ -699,15 +760,10 @@ function KpiTile({ item, editMode, canEdit, onRemove }) {
 }
 
 
-// Текстовый блок.
-// В режиме просмотра — обычный div со стилями шрифта/выравнивания.
-// В режиме редактирования — тулбар (размер + выравнивание + удалить) и
-// textarea для содержимого. Debounce 600 мс при печати + сохранение на blur.
 function TextTile({ item, editMode, canEdit, onUpdate, onRemove }) {
   const [value, setValue] = useState(item.content || "");
   const debounceRef = useRef(null);
 
-  // Если контент пришёл с сервера и не совпадает с локальным — синхронизируем
   useEffect(() => {
     setValue(item.content || "");
   }, [item.content]);
@@ -738,7 +794,6 @@ function TextTile({ item, editMode, canEdit, onUpdate, onRemove }) {
   const fontCls = fontSizeCls(item.font_size);
   const alignCls = textAlignCls(item.text_align);
 
-  // Циклическое переключение размера шрифта по клику на «A»
   const nextFontSize = () => {
     const idx = FONT_SIZES.findIndex((f) => f.value === item.font_size);
     const next = FONT_SIZES[(idx + 1) % FONT_SIZES.length];
@@ -763,17 +818,14 @@ function TextTile({ item, editMode, canEdit, onUpdate, onRemove }) {
 
   return (
     <div className="relative flex h-full w-full flex-col overflow-hidden rounded-xl border border-slate-200 bg-amber-50/40">
-      {/* Drag handle сверху — узкая полоска, тулбар сидит ниже и не цепляется */}
       <div className="widget-drag-handle h-3 shrink-0 cursor-move bg-amber-100/60" />
 
-      {/* Тулбар оформления */}
       {canEdit && (
         <div
           className="no-drag flex items-center justify-between gap-1 border-b border-amber-200 bg-amber-50/60 px-2 py-1"
           onMouseDown={(e) => e.stopPropagation()}
         >
           <div className="flex items-center gap-0.5">
-            {/* Размер шрифта — кнопка-цикл «A» с подписью текущего размера */}
             <button
               type="button"
               onClick={nextFontSize}
@@ -788,7 +840,6 @@ function TextTile({ item, editMode, canEdit, onUpdate, onRemove }) {
 
             <div className="mx-1 h-4 w-px bg-amber-200" />
 
-            {/* Выравнивание */}
             {TEXT_ALIGNS.map((a) => {
               const Icon = a.icon;
               const active = item.text_align === a.value;
@@ -824,7 +875,6 @@ function TextTile({ item, editMode, canEdit, onUpdate, onRemove }) {
         </div>
       )}
 
-      {/* Текстовое поле */}
       <textarea
         value={value}
         onChange={handleInput}
@@ -969,7 +1019,6 @@ function AddKpiModal({ open, onClose, dashboardId, existingKpiIds, onAdded }) {
 }
 
 
-// добавили выбор категории в форму редактирования метаданных дашборда.
 function EditMetaModal({ open, onClose, dashboard, onUpdated }) {
   const toast = useToast();
   const [name, setName] = useState("");
