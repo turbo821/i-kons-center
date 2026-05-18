@@ -10,6 +10,7 @@ import {
   PieChart,
   BarChart3,
   Database,
+  Table as TableIcon,
 } from "lucide-react";
 
 import { useAuth } from "../context/AuthContext";
@@ -188,6 +189,7 @@ const KIND_META = {
   widget: { label: "Виджет", icon: PieChart, color: "text-purple-600" },
   kpi: { label: "KPI", icon: BarChart3, color: "text-emerald-600" },
   datasource: { label: "Источник", icon: Database, color: "text-amber-600" },
+  dataset: { label: "Набор данных", icon: TableIcon, color: "text-cyan-600" },
 };
 
 
