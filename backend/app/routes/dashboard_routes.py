@@ -23,6 +23,25 @@ dashboard_bp = Blueprint("dashboards", __name__, url_prefix="/api/dashboards")
 EDITOR_ROLES = ("admin", "expert")
 
 
+# Допустимые токены оформления текста — синхронизированы с константами
+# в DashboardText и с фронтом. Это белый список: всё остальное игнорируем,
+# чтобы нельзя было записать произвольный CSS-класс.
+ALLOWED_FONT_SIZES = {"sm", "base", "lg", "xl", "2xl", "3xl"}
+ALLOWED_TEXT_ALIGNS = {"left", "center", "right"}
+
+
+def _sanitize_text_style(data):
+    """Возвращает только валидные значения font_size/text_align из payload."""
+    result = {}
+    fs = data.get("font_size")
+    if isinstance(fs, str) and fs in ALLOWED_FONT_SIZES:
+        result["font_size"] = fs
+    ta = data.get("text_align")
+    if isinstance(ta, str) and ta in ALLOWED_TEXT_ALIGNS:
+        result["text_align"] = ta
+    return result
+
+
 @dashboard_bp.route("", methods=["GET"])
 @jwt_required()
 def list_dashboards():
@@ -283,6 +302,7 @@ def add_text_to_dashboard(dashboard_id):
         return jsonify({"message": "Дашборд не найден"}), 404
 
     data = request.json or {}
+    style = _sanitize_text_style(data)
 
     text = DashboardText(
         dashboard_id=dashboard_id,
@@ -291,6 +311,8 @@ def add_text_to_dashboard(dashboard_id):
         position_y=data.get("position_y", 100),
         width=data.get("width", 4),
         height=data.get("height", 2),
+        font_size=style.get("font_size", "base"),
+        text_align=style.get("text_align", "left"),
     )
     db.session.add(text)
     db.session.commit()
@@ -304,7 +326,7 @@ def add_text_to_dashboard(dashboard_id):
 )
 @role_required(*EDITOR_ROLES)
 def update_text(dashboard_id, text_id):
-    """Обновить содержимое текстового элемента."""
+    """Обновить содержимое и/или оформление текстового элемента."""
     text = db.session.get(DashboardText, text_id)
     if text is None or text.dashboard_id != dashboard_id:
         return jsonify({"message": "Не найдено"}), 404
@@ -312,6 +334,12 @@ def update_text(dashboard_id, text_id):
     data = request.json or {}
     if "content" in data:
         text.content = data["content"]
+
+    style = _sanitize_text_style(data)
+    if "font_size" in style:
+        text.font_size = style["font_size"]
+    if "text_align" in style:
+        text.text_align = style["text_align"]
 
     db.session.commit()
     return jsonify(text.to_dict())

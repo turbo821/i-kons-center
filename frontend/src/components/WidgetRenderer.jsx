@@ -19,6 +19,16 @@ const COLORS = [
   "#9333ea", "#0891b2", "#ca8a04", "#db2777",
 ];
 
+// Запас высоты под наклонные подписи XAxis.
+// XAxis.height задаёт зону подписей в SVG — если её мало, recharts
+// «срезает» концы наклонённых подписей по нижней границе чарта, и в PDF
+// это особенно заметно. 60 px = с запасом на 2-строчные русские слова под
+// углом 25°.
+const X_AXIS_HEIGHT = 60;
+
+// Общий margin для чартов — снизу должно хватить под XAxis.height + легенду.
+const CHART_MARGIN = { top: 10, right: 20, bottom: 5, left: 0 };
+
 /**
  * Универсальный рендерер виджетов.
  *
@@ -49,7 +59,6 @@ export default function WidgetRenderer({ type, data, isLoading, error }) {
     return <DataTable rows={rows} columns={[...dimensionKeys, ...metricKeys]} />;
   }
 
-  // Чарты требуют хотя бы одного измерения для оси X
   if (dimensionKeys.length === 0) {
     return <Placeholder>Для графика нужно хотя бы одно измерение</Placeholder>;
   }
@@ -59,9 +68,16 @@ export default function WidgetRenderer({ type, data, isLoading, error }) {
   if (type === "bar") {
     return (
       <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={rows} margin={{ top: 10, right: 20, bottom: 30, left: 0 }}>
+        <BarChart data={rows} margin={CHART_MARGIN}>
           <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-          <XAxis dataKey={xKey} tick={{ fontSize: 12 }} angle={-15} textAnchor="end" />
+          <XAxis
+            dataKey={xKey}
+            tick={{ fontSize: 12 }}
+            angle={-25}
+            textAnchor="end"
+            height={X_AXIS_HEIGHT}
+            interval={0}
+          />
           <YAxis tick={{ fontSize: 12 }} />
           <Tooltip />
           <Legend />
@@ -74,15 +90,21 @@ export default function WidgetRenderer({ type, data, isLoading, error }) {
   }
 
   if (type === "line") {
-    // Для линейного графика осмысленно отсортировать по оси X (часто это даты)
     const sorted = [...rows].sort((a, b) =>
       String(a[xKey]).localeCompare(String(b[xKey]))
     );
     return (
       <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={sorted} margin={{ top: 10, right: 20, bottom: 30, left: 0 }}>
+        <LineChart data={sorted} margin={CHART_MARGIN}>
           <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-          <XAxis dataKey={xKey} tick={{ fontSize: 12 }} angle={-15} textAnchor="end" />
+          <XAxis
+            dataKey={xKey}
+            tick={{ fontSize: 12 }}
+            angle={-25}
+            textAnchor="end"
+            height={X_AXIS_HEIGHT}
+            interval={0}
+          />
           <YAxis tick={{ fontSize: 12 }} />
           <Tooltip />
           <Legend />
@@ -115,7 +137,7 @@ export default function WidgetRenderer({ type, data, isLoading, error }) {
             nameKey={xKey}
             cx="50%"
             cy="50%"
-            outerRadius="80%"
+            outerRadius="75%"
             label={(entry) => entry[xKey]}
           >
             {rows.map((_, i) => (

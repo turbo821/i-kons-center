@@ -121,6 +121,8 @@ class Dashboard(db.Model):
                     "kind": "text",
                     "ref_id": dt.id,
                     "content": dt.content,
+                    "font_size": dt.font_size or "base",
+                    "text_align": dt.text_align or "left",
                     "position_x": dt.position_x,
                     "position_y": dt.position_y,
                     "width": dt.width,

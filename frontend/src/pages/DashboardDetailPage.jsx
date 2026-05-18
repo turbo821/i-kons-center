@@ -15,6 +15,9 @@ import {
   Type as TypeIcon,
   Pin,
   Download,
+  AlignLeft,
+  AlignCenter,
+  AlignRight,
 } from "lucide-react";
 
 import {
@@ -49,6 +52,29 @@ const ROW_HEIGHT = 60;
 const KEY_WIDGET = "w";
 const KEY_KPI = "k";
 const KEY_TEXT = "t";
+
+
+// Размеры шрифта текстового блока — токены, синхронизированы с бэкендом.
+// Tailwind-классы выбраны так, чтобы соответствовать стандартной шкале text-*.
+const FONT_SIZES = [
+  { value: "sm", label: "Маленький", cls: "text-sm" },
+  { value: "base", label: "Обычный", cls: "text-base" },
+  { value: "lg", label: "Крупный", cls: "text-lg" },
+  { value: "xl", label: "Заголовок", cls: "text-xl font-semibold" },
+  { value: "2xl", label: "Заголовок XL", cls: "text-2xl font-semibold" },
+  { value: "3xl", label: "Заголовок XXL", cls: "text-3xl font-bold" },
+];
+
+const TEXT_ALIGNS = [
+  { value: "left", icon: AlignLeft, cls: "text-left" },
+  { value: "center", icon: AlignCenter, cls: "text-center" },
+  { value: "right", icon: AlignRight, cls: "text-right" },
+];
+
+const fontSizeCls = (key) =>
+  FONT_SIZES.find((f) => f.value === key)?.cls || FONT_SIZES[1].cls;
+const textAlignCls = (key) =>
+  TEXT_ALIGNS.find((a) => a.value === key)?.cls || TEXT_ALIGNS[0].cls;
 
 
 export default function DashboardDetailPage() {
@@ -111,8 +137,10 @@ export default function DashboardDetailPage() {
         y: item.position_y,
         w: item.width,
         h: item.height,
-        minW: 2,
-        minH: 2,
+        // Для текста разрешаем «высоту в одну строку» — minH=1, чтобы можно
+        // было ужать блок до короткого заголовка.
+        minW: item.kind === "text" ? 2 : 2,
+        minH: item.kind === "text" ? 1 : 2,
       };
     });
   }, [items]);
@@ -193,7 +221,7 @@ export default function DashboardDetailPage() {
     }
   };
 
-  // Task 5: добавление и удаление текстовых блоков
+  // добавление и удаление текстовых блоков
   const handleAddText = async () => {
     try {
       await addTextToDashboard(id, {
@@ -202,6 +230,8 @@ export default function DashboardDetailPage() {
         position_y: 1000, // в самый низ
         width: 4,
         height: 2,
+        font_size: "base",
+        text_align: "left",
       });
       load();
     } catch (e) {
@@ -226,18 +256,20 @@ export default function DashboardDetailPage() {
     }
   };
 
-  // Task 5: сохраняем содержимое текста локально + на сервере (без перезагрузки)
-  const handleUpdateTextContent = async (textId, content) => {
+  // Универсальный апдейтер: принимает partial-объект с любым набором полей
+  // (content / font_size / text_align). Локально обновляем сразу, на сервер
+  // шлём один PUT.
+  const handleUpdateText = async (textId, patch) => {
     setDashboard((prev) => ({
       ...prev,
       items: prev.items.map((it) =>
         it.kind === "text" && it.ref_id === textId
-          ? { ...it, content }
+          ? { ...it, ...patch }
           : it
       ),
     }));
     try {
-      await updateDashboardText(id, textId, { content });
+      await updateDashboardText(id, textId, patch);
     } catch (e) {
       toast.error("Не удалось сохранить текст");
     }
@@ -254,8 +286,19 @@ export default function DashboardDetailPage() {
     }
   };
 
-  // Task 2: Экспорт дашборда в PDF через html2canvas + jsPDF.
-  // Динамический import — чтобы тяжёлые либы не попадали в основной бандл.
+  // -------------------------------------------------------------------
+  // Экспорт дашборда в PDF
+  //
+  // Главная проблема, которую решаем: html2canvas снимает строго bounding-box
+  // элемента в текущем рендере. У react-grid-layout контейнер имеет высоту,
+  // вычисляемую от позиций элементов, и иногда последний ряд (особенно
+  // подписи под графиками) попадает на самую границу — при scale=2 это
+  // приводит к обрезанию пары пикселей снизу. Чтобы это починить:
+  //  1. Принудительно ставим контейнеру высоту = scrollHeight + запас.
+  //  2. Передаём html2canvas явные width/height и windowHeight с тем же
+  //     запасом — он рендерит viewport нужного размера.
+  //  3. После снимка возвращаем стили обратно.
+  // -------------------------------------------------------------------
   const handleExportPdf = async () => {
     setExportingPdf(true);
     try {
@@ -270,17 +313,49 @@ export default function DashboardDetailPage() {
         import("jspdf"),
       ]);
 
-      // Делаем снимок DOM с белым фоном и x2 разрешением — текст не «мылится»
-      const canvas = await html2canvas(node, {
-        scale: 2,
-        backgroundColor: "#ffffff",
-        useCORS: true,
-        logging: false,
-      });
+      // Запас, чтобы захватить подписи и нижние границы графиков целиком
+      const BOTTOM_PAD = 40;
+
+      // Сохраняем исходные inline-стили, чтобы вернуть после снимка
+      const prev = {
+        height: node.style.height,
+        overflow: node.style.overflow,
+        paddingBottom: node.style.paddingBottom,
+      };
+
+      // Полная высота контейнера со всем содержимым + дополнительный паддинг
+      const fullHeight = node.scrollHeight + BOTTOM_PAD;
+
+      // Фиксируем высоту и убираем возможные скроллы/обрезание дочерних
+      node.style.height = `${fullHeight}px`;
+      node.style.overflow = "visible";
+      node.style.paddingBottom = `${BOTTOM_PAD}px`;
+
+      // Дадим браузеру кадр на перерисовку перед снимком
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+
+      let canvas;
+      try {
+        canvas = await html2canvas(node, {
+          scale: 2,
+          backgroundColor: "#ffffff",
+          useCORS: true,
+          logging: false,
+          width: node.scrollWidth,
+          height: fullHeight,
+          windowWidth: node.scrollWidth,
+          windowHeight: fullHeight,
+        });
+      } finally {
+        // Возвращаем стили в любом случае
+        node.style.height = prev.height;
+        node.style.overflow = prev.overflow;
+        node.style.paddingBottom = prev.paddingBottom;
+      }
 
       const imgData = canvas.toDataURL("image/png");
 
-      // Используем альбомную A4 и вписываем картинку с сохранением пропорций
+      // Альбомная A4, вписываем картинку с сохранением пропорций
       const pdf = new jsPDF({
         orientation: "landscape",
         unit: "pt",
@@ -293,7 +368,6 @@ export default function DashboardDetailPage() {
       const availW = pageWidth - margin * 2;
       const availH = pageHeight - margin * 2;
 
-      // Вписать с сохранением пропорций
       const ratio = Math.min(availW / canvas.width, availH / canvas.height);
       const renderW = canvas.width * ratio;
       const renderH = canvas.height * ratio;
@@ -358,7 +432,6 @@ export default function DashboardDetailPage() {
         </div>
 
         <div className="flex flex-wrap gap-2">
-          {/* Task 6: pin/unpin доступно всегда (даже без edit mode) для удобства */}
           {canEdit && (
             <button
               onClick={handleTogglePin}
@@ -377,7 +450,6 @@ export default function DashboardDetailPage() {
             </button>
           )}
 
-          {/* Task 2: экспорт в PDF — доступен всем, кто видит дашборд */}
           <button
             onClick={handleExportPdf}
             disabled={exportingPdf}
@@ -434,7 +506,9 @@ export default function DashboardDetailPage() {
         <div className="rounded-xl bg-slate-100 px-4 py-3 text-sm text-slate-700">
           Режим редактирования: перетаскивайте элементы за заголовок,
           меняйте размер. Изменения сохраняются автоматически.
-          Кликните по тексту, чтобы изменить его содержимое.
+          Кликните по тексту, чтобы изменить его содержимое и оформление.
+          Чтобы сделать текст-«заголовок в одну строку» — уменьшите высоту
+          блока до 1 и выберите крупный размер шрифта.
         </div>
       )}
 
@@ -493,8 +567,8 @@ export default function DashboardDetailPage() {
                       item={item}
                       editMode={editMode}
                       canEdit={canEdit}
-                      onChange={(content) =>
-                        handleUpdateTextContent(item.ref_id, content)
+                      onUpdate={(patch) =>
+                        handleUpdateText(item.ref_id, patch)
                       }
                       onRemove={() => handleRemoveText(item.ref_id)}
                     />
@@ -625,10 +699,11 @@ function KpiTile({ item, editMode, canEdit, onRemove }) {
 }
 
 
-// Task 5: текстовый блок с редактированием по клику в режиме edit.
-// Сохранение — на blur и через debounce при печати (чтобы каждое нажатие
-// клавиши не уходило на сервер).
-function TextTile({ item, editMode, canEdit, onChange, onRemove }) {
+// Текстовый блок.
+// В режиме просмотра — обычный div со стилями шрифта/выравнивания.
+// В режиме редактирования — тулбар (размер + выравнивание + удалить) и
+// textarea для содержимого. Debounce 600 мс при печати + сохранение на blur.
+function TextTile({ item, editMode, canEdit, onUpdate, onRemove }) {
   const [value, setValue] = useState(item.content || "");
   const debounceRef = useRef(null);
 
@@ -640,7 +715,7 @@ function TextTile({ item, editMode, canEdit, onChange, onRemove }) {
   const scheduleSave = (newValue) => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
-      onChange(newValue);
+      onUpdate({ content: newValue });
     }, 600);
   };
 
@@ -656,44 +731,108 @@ function TextTile({ item, editMode, canEdit, onChange, onRemove }) {
       debounceRef.current = null;
     }
     if (value !== item.content) {
-      onChange(value);
+      onUpdate({ content: value });
     }
   };
 
-  return (
-    <div className="relative flex h-full w-full flex-col rounded-xl border border-slate-200 bg-amber-50/40 p-3">
-      {editMode && (
-        <div className="widget-drag-handle absolute inset-x-0 top-0 z-10 h-6 cursor-move" />
-      )}
+  const fontCls = fontSizeCls(item.font_size);
+  const alignCls = textAlignCls(item.text_align);
 
-      {editMode && canEdit ? (
-        <textarea
-          value={value}
-          onChange={handleInput}
-          onBlur={handleBlur}
+  // Циклическое переключение размера шрифта по клику на «A»
+  const nextFontSize = () => {
+    const idx = FONT_SIZES.findIndex((f) => f.value === item.font_size);
+    const next = FONT_SIZES[(idx + 1) % FONT_SIZES.length];
+    onUpdate({ font_size: next.value });
+  };
+  const currentFont = FONT_SIZES.find((f) => f.value === item.font_size)
+    || FONT_SIZES[1];
+
+  if (!editMode) {
+    return (
+      <div className="flex h-full w-full items-center overflow-hidden rounded-xl border border-slate-200 bg-amber-50/40 p-3">
+        <div
+          className={`w-full break-words ${fontCls} ${alignCls} text-slate-800`}
+        >
+          {value || (
+            <span className="text-slate-400">Текст не задан</span>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="relative flex h-full w-full flex-col overflow-hidden rounded-xl border border-slate-200 bg-amber-50/40">
+      {/* Drag handle сверху — узкая полоска, тулбар сидит ниже и не цепляется */}
+      <div className="widget-drag-handle h-3 shrink-0 cursor-move bg-amber-100/60" />
+
+      {/* Тулбар оформления */}
+      {canEdit && (
+        <div
+          className="no-drag flex items-center justify-between gap-1 border-b border-amber-200 bg-amber-50/60 px-2 py-1"
           onMouseDown={(e) => e.stopPropagation()}
-          placeholder="Введите текст..."
-          className="no-drag mt-5 h-full w-full resize-none rounded-md border border-amber-200 bg-white/70 p-2 text-sm focus:border-amber-400 focus:outline-none"
-        />
-      ) : (
-        <div className="h-full w-full overflow-auto whitespace-pre-wrap break-words p-1 text-sm text-slate-800">
-          {value || <span className="text-slate-400">Текст не задан</span>}
+        >
+          <div className="flex items-center gap-0.5">
+            {/* Размер шрифта — кнопка-цикл «A» с подписью текущего размера */}
+            <button
+              type="button"
+              onClick={nextFontSize}
+              title={`Размер: ${currentFont.label}. Кликните, чтобы переключить.`}
+              className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs font-medium text-slate-700 hover:bg-amber-100"
+            >
+              <span className={`${currentFont.cls} leading-none`}>A</span>
+              <span className="text-[10px] text-slate-500">
+                {currentFont.value}
+              </span>
+            </button>
+
+            <div className="mx-1 h-4 w-px bg-amber-200" />
+
+            {/* Выравнивание */}
+            {TEXT_ALIGNS.map((a) => {
+              const Icon = a.icon;
+              const active = item.text_align === a.value;
+              return (
+                <button
+                  key={a.value}
+                  type="button"
+                  onClick={() => onUpdate({ text_align: a.value })}
+                  title={`Выравнивание: ${a.value}`}
+                  className={`rounded p-1 ${
+                    active
+                      ? "bg-amber-200 text-slate-900"
+                      : "text-slate-600 hover:bg-amber-100"
+                  }`}
+                >
+                  <Icon size={13} />
+                </button>
+              );
+            })}
+          </div>
+
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onRemove();
+            }}
+            className="rounded p-1 text-red-600 hover:bg-red-100"
+            title="Удалить текстовый блок"
+          >
+            <X size={13} />
+          </button>
         </div>
       )}
 
-      {editMode && canEdit && (
-        <button
-          onMouseDown={(e) => e.stopPropagation()}
-          onClick={(e) => {
-            e.stopPropagation();
-            onRemove();
-          }}
-          className="no-drag absolute right-1.5 top-1.5 z-20 rounded-lg bg-white p-1 text-red-600 shadow-sm hover:bg-red-50"
-          title="Удалить текстовый блок"
-        >
-          <X size={14} />
-        </button>
-      )}
+      {/* Текстовое поле */}
+      <textarea
+        value={value}
+        onChange={handleInput}
+        onBlur={handleBlur}
+        onMouseDown={(e) => e.stopPropagation()}
+        placeholder="Введите текст..."
+        className={`no-drag w-full flex-1 resize-none border-0 bg-transparent p-2 focus:outline-none focus:ring-0 ${fontCls} ${alignCls}`}
+      />
     </div>
   );
 }
@@ -755,8 +894,7 @@ function AddWidgetModal({ open, onClose, dashboardId, existingWidgetIds, onAdded
               <div>
                 <p className="font-medium">{w.title}</p>
                 <p className="text-xs text-slate-500">
-                  {w.type} · {w.datasource_category_name && `${w.datasource_category_name}/`}
-                  {w.datasource_name && `${w.datasource_name}/`}{w.dataset_name}
+                  {w.type} · {w.dataset_name}
                 </p>
               </div>
               <Plus size={18} className="text-slate-700" />
@@ -831,7 +969,7 @@ function AddKpiModal({ open, onClose, dashboardId, existingKpiIds, onAdded }) {
 }
 
 
-// Task 1: добавили выбор категории в форму редактирования метаданных дашборда.
+// добавили выбор категории в форму редактирования метаданных дашборда.
 function EditMetaModal({ open, onClose, dashboard, onUpdated }) {
   const toast = useToast();
   const [name, setName] = useState("");
@@ -845,8 +983,6 @@ function EditMetaModal({ open, onClose, dashboard, onUpdated }) {
     setName(dashboard.name);
     setDesc(dashboard.description || "");
     setCategoryId(dashboard.category_id ? String(dashboard.category_id) : "");
-    // Грузим список категорий каждый раз при открытии — на случай если их
-    // только что добавили в админке.
     dashboardCategoryApi.list()
       .then(({ data }) => setCategories(data))
       .catch(() => {});

@@ -33,9 +33,12 @@ def system_overview():
         "kpis": db.session.query(KPI).count(),
     }
 
+    # Закреплённые — наверх, далее по дате создания (сначала новые).
+    # Так лента «Недавние дашборды» на главной согласуется со списком
+    # дашбордов: всё закреплённое всегда видно первым.
     recent_dashboards = (
         db.session.query(Dashboard)
-        .order_by(Dashboard.created_at.desc())
+        .order_by(Dashboard.is_pinned.desc(), Dashboard.created_at.desc())
         .limit(5)
         .all()
     )

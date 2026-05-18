@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   LayoutDashboard,
@@ -115,6 +115,16 @@ function AuthedHome() {
       .finally(() => setLoading(false));
   }, []);
 
+  // Закреплённые показываем отдельным блоком, поэтому в «Недавние» их
+  // не повторяем (бэкенд сортирует закреплённые наверх — это удобно для
+  // обычного списка дашбордов, но на главной даёт дублирование).
+  const recentWithoutPinned = useMemo(() => {
+    const pinnedIds = new Set(pinned.map((d) => d.id));
+    return (stats?.recent_dashboards || []).filter(
+      (d) => !pinnedIds.has(d.id)
+    );
+  }, [stats, pinned]);
+
   const isAdmin = user?.roles?.includes("admin");
 
   const cards = stats
@@ -203,7 +213,7 @@ function AuthedHome() {
         </div>
       )}
 
-      {/* Task 6: Закреплённые дашборды */}
+      {/* Закреплённые дашборды */}
       {pinned.length > 0 && (
         <div className="rounded-2xl bg-white p-6 shadow-sm">
           <div className="mb-4 flex items-center justify-between">
@@ -252,8 +262,8 @@ function AuthedHome() {
         </div>
       )}
 
-      {/* Последние дашборды */}
-      {stats?.recent_dashboards?.length > 0 && (
+      {/* Недавние дашборды (без закреплённых — они показаны выше) */}
+      {recentWithoutPinned.length > 0 && (
         <div className="rounded-2xl bg-white p-6 shadow-sm">
           <div className="mb-4 flex items-center justify-between">
             <h2 className="font-semibold">Недавние дашборды</h2>
@@ -266,7 +276,7 @@ function AuthedHome() {
           </div>
 
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
-            {stats.recent_dashboards.map((d) => (
+            {recentWithoutPinned.map((d) => (
               <Link
                 key={d.id}
                 to={`/dashboards/${d.id}`}

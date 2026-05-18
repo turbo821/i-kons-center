@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { Plus, LayoutDashboard, Trash2, FolderTree, Pin, PinOff } from "lucide-react";
+import { Plus, LayoutDashboard, Trash2, FolderTree, Pin } from "lucide-react";
 
 import {
   listDashboards,
@@ -82,7 +82,14 @@ export default function DashboardsPage() {
     result = result.filter((i) =>
       matchesSearch(i, search, ["name", "description"])
     );
-    return applySort(result, sort, SORT_MAP);
+    const sorted = applySort(result, sort, SORT_MAP);
+
+    // Закреплённые — всегда наверх, поверх любой сортировки.
+    // Используем stable-sort: только переносим pinned в начало, относительный
+    // порядок внутри групп сохраняется.
+    const pinned = sorted.filter((i) => i.is_pinned);
+    const unpinned = sorted.filter((i) => !i.is_pinned);
+    return [...pinned, ...unpinned];
     // Task 1: добавил filterCategory в зависимости — иначе фильтр по категории
     // не пересчитывался корректно при выборе категории.
   }, [items, search, sort, filterCategory]);
