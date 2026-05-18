@@ -632,7 +632,7 @@ function KpiEditorModal({ open, onClose, editingKpi, categories, onSaved }) {
         </div>
 
         <div className="col-span-2">
-          <Label>Формула (документация)</Label>
+          <Label>Документация</Label>
           <Input
             value={form.formula}
             onChange={change("formula")}
