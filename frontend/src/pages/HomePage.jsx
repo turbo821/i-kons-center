@@ -9,9 +9,11 @@ import {
   Target,
   ArrowRight,
   Sparkles,
+  Pin,
 } from "lucide-react";
 
 import { getSystemOverview } from "../api/userApi";
+import { listDashboards } from "../api/dashboardApi";
 import { useAuth } from "../context/AuthContext";
 
 
@@ -98,11 +100,18 @@ function FeatureCard({ icon: Icon, title, text }) {
 function AuthedHome() {
   const { user } = useAuth();
   const [stats, setStats] = useState(null);
+  const [pinned, setPinned] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    getSystemOverview()
-      .then(({ data }) => setStats(data))
+    Promise.all([
+      getSystemOverview(),
+      listDashboards({ pinned: "true" }),
+    ])
+      .then(([statsRes, pinnedRes]) => {
+        setStats(statsRes.data);
+        setPinned(pinnedRes.data || []);
+      })
       .finally(() => setLoading(false));
   }, []);
 
@@ -191,6 +200,55 @@ function AuthedHome() {
               </Link>
             );
           })}
+        </div>
+      )}
+
+      {/* Task 6: Закреплённые дашборды */}
+      {pinned.length > 0 && (
+        <div className="rounded-2xl bg-white p-6 shadow-sm">
+          <div className="mb-4 flex items-center justify-between">
+            <h2 className="flex items-center gap-2 font-semibold">
+              <Pin size={16} className="text-amber-600" fill="currentColor" />
+              Закреплённые дашборды
+            </h2>
+            <Link
+              to="/dashboards"
+              className="text-sm font-medium text-blue-600 hover:text-blue-500"
+            >
+              Все →
+            </Link>
+          </div>
+
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
+            {pinned.map((d) => (
+              <Link
+                key={d.id}
+                to={`/dashboards/${d.id}`}
+                className="block rounded-xl border border-amber-200 bg-amber-50/40 p-3 transition hover:border-amber-400 hover:bg-amber-50"
+              >
+                <div className="flex items-start gap-2">
+                  <Pin
+                    size={14}
+                    className="mt-1 shrink-0 text-amber-600"
+                    fill="currentColor"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate font-medium">{d.name}</p>
+                    {d.description && (
+                      <p className="line-clamp-1 text-xs text-slate-500">
+                        {d.description}
+                      </p>
+                    )}
+                    {d.category_name && (
+                      <p className="mt-1 inline-block rounded bg-white px-1.5 py-0.5 text-xs text-slate-600">
+                        {d.category_name}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </Link>
+            ))}
+          </div>
         </div>
       )}
 

@@ -16,6 +16,14 @@ class Dashboard(db.Model):
         nullable=True
     )
 
+    # Закреплён ли дашборд на главной странице
+    is_pinned = db.Column(
+        db.Boolean,
+        nullable=False,
+        server_default=db.text("false"),
+        default=False,
+    )
+
     created_by = db.Column(
         db.Integer,
         db.ForeignKey("users.id", ondelete="SET NULL"),
@@ -50,6 +58,13 @@ class Dashboard(db.Model):
         cascade="all, delete-orphan"
     )
 
+    # Текстовые элементы на дашборде (подписи, заметки)
+    dashboard_texts = db.relationship(
+        "DashboardText",
+        back_populates="dashboard",
+        cascade="all, delete-orphan"
+    )
+
     # Технический shortcut: KPI напрямую (без позиций)
     kpis = db.relationship(
         "KPI",
@@ -66,11 +81,12 @@ class Dashboard(db.Model):
             "description": self.description,
             "category_id": self.category_id,
             "category_name": self.category.name if self.category else None,
+            "is_pinned": bool(self.is_pinned),
             "created_by": self.created_by,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
         if include_widgets:
-            # Единый массив элементов: и виджеты, и KPI с координатами.
+            # Единый массив элементов: виджеты, KPI и текстовые блоки.
             # Поле kind помогает фронту отрисовать правильный компонент.
             items = []
 
@@ -98,6 +114,17 @@ class Dashboard(db.Model):
                     "position_y": dk.position_y,
                     "width": dk.width,
                     "height": dk.height,
+                })
+
+            for dt in self.dashboard_texts:
+                items.append({
+                    "kind": "text",
+                    "ref_id": dt.id,
+                    "content": dt.content,
+                    "position_x": dt.position_x,
+                    "position_y": dt.position_y,
+                    "width": dt.width,
+                    "height": dt.height,
                 })
 
             data["items"] = items

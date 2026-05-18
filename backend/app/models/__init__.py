@@ -23,6 +23,8 @@ from app.models.kpi_category import KPICategory
 from app.models.kpi import KPI
 from app.models.dashboard_kpi import DashboardKPI
 
+from app.models.dashboard_text import DashboardText
+
 __all__ = [
     "Role", "UserRole", "User",
     "DataSource", "Dataset", "DatasetField",
@@ -33,4 +35,5 @@ __all__ = [
     "KPI", "DashboardKPI",
     "DataSourceCategory", "DashboardCategory", 
     "WidgetCategory", "KPICategory",
+    "DashboardText",
 ]

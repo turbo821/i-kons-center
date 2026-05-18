@@ -13,6 +13,7 @@ from app.models import (
     DashboardWidget,
     KPI,
     DashboardKPI,
+    DashboardText,
 )
 from app.auth.decorators import role_required
 
@@ -29,7 +30,17 @@ def list_dashboards():
     category_id = request.args.get("category_id", type=int)
     if category_id is not None:
         q = q.filter_by(category_id=category_id)
-    items = q.order_by(Dashboard.created_at.desc()).all()
+
+    # Опционально: только закреплённые (?pinned=true)
+    pinned_only = request.args.get("pinned", "").lower() == "true"
+    if pinned_only:
+        q = q.filter_by(is_pinned=True)
+
+    # Закреплённые — наверх, остальное — по дате создания
+    items = q.order_by(
+        Dashboard.is_pinned.desc(),
+        Dashboard.created_at.desc()
+    ).all()
     return jsonify([d.to_dict() for d in items])
 
 
@@ -95,6 +106,9 @@ def update_dashboard(dashboard_id):
             }), 400
         dashboard.category_id = cat
 
+    if "is_pinned" in data:
+        dashboard.is_pinned = bool(data["is_pinned"])
+
     db.session.commit()
     return jsonify(dashboard.to_dict())
 
@@ -109,6 +123,28 @@ def delete_dashboard(dashboard_id):
     db.session.delete(dashboard)
     db.session.commit()
     return jsonify({"message": "Удалено"})
+
+
+# ---------------------------------------------------------------------------
+# Закрепление дашборда
+# ---------------------------------------------------------------------------
+@dashboard_bp.route("/<int:dashboard_id>/pin", methods=["POST"])
+@role_required(*EDITOR_ROLES)
+def pin_dashboard(dashboard_id):
+    """Закрепить или открепить дашборд: тогглится между pinned/unpinned."""
+    dashboard = db.session.get(Dashboard, dashboard_id)
+    if dashboard is None:
+        return jsonify({"message": "Не найдено"}), 404
+
+    data = request.json or {}
+    # Если передано явное значение — используем его; иначе тогглим
+    if "is_pinned" in data:
+        dashboard.is_pinned = bool(data["is_pinned"])
+    else:
+        dashboard.is_pinned = not bool(dashboard.is_pinned)
+
+    db.session.commit()
+    return jsonify(dashboard.to_dict())
 
 
 # ---------------------------------------------------------------------------
@@ -236,7 +272,68 @@ def remove_kpi_from_dashboard(dashboard_id, kpi_id):
 
 
 # ---------------------------------------------------------------------------
-# Пакетное обновление layout (виджеты + KPI вместе)
+# Текстовые элементы на дашборде
+# ---------------------------------------------------------------------------
+@dashboard_bp.route("/<int:dashboard_id>/texts", methods=["POST"])
+@role_required(*EDITOR_ROLES)
+def add_text_to_dashboard(dashboard_id):
+    """Создать текстовый элемент."""
+    dashboard = db.session.get(Dashboard, dashboard_id)
+    if dashboard is None:
+        return jsonify({"message": "Дашборд не найден"}), 404
+
+    data = request.json or {}
+
+    text = DashboardText(
+        dashboard_id=dashboard_id,
+        content=data.get("content", ""),
+        position_x=data.get("position_x", 0),
+        position_y=data.get("position_y", 100),
+        width=data.get("width", 4),
+        height=data.get("height", 2),
+    )
+    db.session.add(text)
+    db.session.commit()
+
+    return jsonify(text.to_dict()), 201
+
+
+@dashboard_bp.route(
+    "/<int:dashboard_id>/texts/<int:text_id>",
+    methods=["PUT"]
+)
+@role_required(*EDITOR_ROLES)
+def update_text(dashboard_id, text_id):
+    """Обновить содержимое текстового элемента."""
+    text = db.session.get(DashboardText, text_id)
+    if text is None or text.dashboard_id != dashboard_id:
+        return jsonify({"message": "Не найдено"}), 404
+
+    data = request.json or {}
+    if "content" in data:
+        text.content = data["content"]
+
+    db.session.commit()
+    return jsonify(text.to_dict())
+
+
+@dashboard_bp.route(
+    "/<int:dashboard_id>/texts/<int:text_id>",
+    methods=["DELETE"]
+)
+@role_required(*EDITOR_ROLES)
+def remove_text_from_dashboard(dashboard_id, text_id):
+    text = db.session.get(DashboardText, text_id)
+    if text is None or text.dashboard_id != dashboard_id:
+        return jsonify({"message": "Не найдено"}), 404
+
+    db.session.delete(text)
+    db.session.commit()
+    return jsonify({"message": "Удалено"})
+
+
+# ---------------------------------------------------------------------------
+# Пакетное обновление layout (виджеты + KPI + тексты вместе)
 # ---------------------------------------------------------------------------
 @dashboard_bp.route("/<int:dashboard_id>/layout", methods=["PUT"])
 @role_required(*EDITOR_ROLES)
@@ -246,7 +343,8 @@ def update_dashboard_layout(dashboard_id):
     {
       "items": [
         {"kind": "widget", "ref_id": 1, "position_x": 0, "position_y": 0, "width": 6, "height": 4},
-        {"kind": "kpi",    "ref_id": 5, "position_x": 6, "position_y": 0, "width": 3, "height": 3}
+        {"kind": "kpi",    "ref_id": 5, "position_x": 6, "position_y": 0, "width": 3, "height": 3},
+        {"kind": "text",   "ref_id": 2, "position_x": 0, "position_y": 4, "width": 4, "height": 2}
       ]
     }
     """
@@ -268,9 +366,15 @@ def update_dashboard_layout(dashboard_id):
         .filter_by(dashboard_id=dashboard_id)
         .all()
     )
+    text_placements = (
+        db.session.query(DashboardText)
+        .filter_by(dashboard_id=dashboard_id)
+        .all()
+    )
 
     widgets_by_id = {p.widget_id: p for p in widget_placements}
     kpis_by_id = {p.kpi_id: p for p in kpi_placements}
+    texts_by_id = {p.id: p for p in text_placements}
 
     for item in items:
         kind = item.get("kind")
@@ -282,6 +386,8 @@ def update_dashboard_layout(dashboard_id):
             placement = widgets_by_id.get(ref_id)
         elif kind == "kpi":
             placement = kpis_by_id.get(ref_id)
+        elif kind == "text":
+            placement = texts_by_id.get(ref_id)
         else:
             continue
 

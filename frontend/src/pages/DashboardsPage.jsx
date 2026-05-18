@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { Plus, LayoutDashboard, Trash2, FolderTree } from "lucide-react";
+import { Plus, LayoutDashboard, Trash2, FolderTree, Pin, PinOff } from "lucide-react";
 
 import {
   listDashboards,
   createDashboard,
   deleteDashboard,
+  pinDashboard,
 } from "../api/dashboardApi";
 
 import { useAuth } from "../context/AuthContext";
@@ -82,7 +83,9 @@ export default function DashboardsPage() {
       matchesSearch(i, search, ["name", "description"])
     );
     return applySort(result, sort, SORT_MAP);
-  }, [items, search, sort]);
+    // Task 1: добавил filterCategory в зависимости — иначе фильтр по категории
+    // не пересчитывался корректно при выборе категории.
+  }, [items, search, sort, filterCategory]);
 
   const handleDelete = async (dashboard) => {
     const ok = await confirm({
@@ -98,6 +101,24 @@ export default function DashboardsPage() {
       load();
     } catch (e) {
       toast.error(e?.response?.data?.message || "Ошибка");
+    }
+  };
+
+  // Task 6: тоггл pin/unpin прямо со списка дашбордов
+  const handleTogglePin = async (dashboard, e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    try {
+      await pinDashboard(dashboard.id, !dashboard.is_pinned);
+      // Локально обновляем — без полного reload
+      setItems((prev) =>
+        prev.map((it) =>
+          it.id === dashboard.id ? { ...it, is_pinned: !it.is_pinned } : it
+        )
+      );
+      toast.success(dashboard.is_pinned ? "Откреплён" : "Закреплён");
+    } catch (err) {
+      toast.error(err?.response?.data?.message || "Ошибка");
     }
   };
 
@@ -169,10 +190,27 @@ export default function DashboardsPage() {
           {filtered.map((item) => (
             <div
               key={item.id}
-              className="rounded-2xl bg-white p-5 shadow-sm transition hover:shadow-md"
+              className={`relative rounded-2xl bg-white p-5 shadow-sm transition hover:shadow-md ${
+                item.is_pinned ? "ring-1 ring-amber-300" : ""
+              }`}
             >
+              {/* Task 6: индикатор закрепления + кнопка переключения */}
+              {canEdit && (
+                <button
+                  onClick={(e) => handleTogglePin(item, e)}
+                  title={item.is_pinned ? "Открепить" : "Закрепить на главной"}
+                  className={`absolute right-3 top-3 rounded-lg p-1.5 ${
+                    item.is_pinned
+                      ? "text-amber-600 hover:bg-amber-50"
+                      : "text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                  }`}
+                >
+                  {item.is_pinned ? <Pin size={14} fill="currentColor" /> : <Pin size={14} />}
+                </button>
+              )}
+
               <Link to={`/dashboards/${item.id}`} className="block">
-                <div className="mb-3 flex items-start gap-3">
+                <div className="mb-3 flex items-start gap-3 pr-7">
                   <div className="rounded-xl bg-slate-100 p-2 text-slate-700">
                     <LayoutDashboard size={22} />
                   </div>

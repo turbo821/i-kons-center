@@ -176,6 +176,11 @@ def aggregate_widget_data(widget: Widget) -> dict:
     3. Сгруппировать по dimensions
     4. Применить агрегации metrics
     5. Вернуть в plain-dict формате
+
+    Названия колонок в результате:
+        — метрика выводится под именем metric.name (пользовательское имя);
+        — измерение тоже под dimension.name (а не под именем поля),
+          чтобы на графике/в таблице отображалась пользовательская подпись.
     """
     if not widget.dataset:
         raise ValueError("У виджета нет датасета")
@@ -196,9 +201,12 @@ def aggregate_widget_data(widget: Widget) -> dict:
 
     # 3. Группировка и агрегация
     if widget.dimensions and widget.metrics:
-        # Стандартный случай: group by dimensions, agg metrics
-        dim_cols = [d.field.name for d in widget.dimensions]
-        dimension_keys = dim_cols[:]
+        # Стандартный случай: group by dimensions, agg metrics.
+        # Группируем по физическим именам полей, а потом
+        # переименовываем колонки в пользовательские имена измерений.
+        dim_field_cols = [d.field.name for d in widget.dimensions]
+        dim_display_names = [d.name for d in widget.dimensions]
+        dimension_keys = dim_display_names[:]
 
         # Конвертация дат для группировки в строку YYYY-MM-DD,
         # иначе pandas будет группировать по timestamp до миллисекунд
@@ -223,9 +231,18 @@ def aggregate_widget_data(widget: Widget) -> dict:
             return {"rows": [], "metric_keys": [], "dimension_keys": dimension_keys}
 
         # Уберём строки с пустыми группирующими полями
-        df = df.dropna(subset=dim_cols, how="any")
+        df = df.dropna(subset=dim_field_cols, how="any")
 
-        grouped = df.groupby(dim_cols, dropna=False, as_index=False).agg(**agg_spec)
+        grouped = df.groupby(dim_field_cols, dropna=False, as_index=False).agg(**agg_spec)
+
+        # Переименовываем колонки измерений в пользовательские имена
+        rename_map = {
+            field_col: display_name
+            for field_col, display_name in zip(dim_field_cols, dim_display_names)
+            if field_col != display_name
+        }
+        if rename_map:
+            grouped = grouped.rename(columns=rename_map)
 
         # Сортируем по первой метрике по убыванию (для bar/pie это полезно)
         if metric_keys:

@@ -80,6 +80,13 @@ class Widget(db.Model):
             "type": self.type,
             "category_id": self.category_id,
             "category_name": self.category.name if self.category else None,
+            "datasource_name": (
+                self.dataset.datasource.name if self.dataset.datasource else None
+            ),
+            "datasource_category_name": (
+                self.dataset.datasource.category.name
+                if self.dataset.datasource and self.dataset.datasource.category else None
+            ),
         }
         if include_config:
             data["metrics"] = [m.to_dict() for m in self.metrics]

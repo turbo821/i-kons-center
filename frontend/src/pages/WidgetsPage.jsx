@@ -69,24 +69,28 @@ export default function WidgetsPage() {
   const [filterCategory, setFilterCategory] = useState(undefined); // undefined = все
   const [categoriesOpen, setCategoriesOpen] = useState(false);
 
+  // Task 1: грузим и виджеты, и категории сразу — иначе чипсы категорий
+  // не появляются до первого ручного обновления.
+  const load = async () => {
+    setLoading(true);
+    try {
+      const [itemsRes, catsRes] = await Promise.all([
+        listWidgets(),
+        widgetCategoryApi.list(),
+      ]);
+      setWidgets(itemsRes.data);
+      setCategories(catsRes.data);
+    } catch {
+      toast.error("Не удалось загрузить виджеты");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
-    listWidgets()
-      .then(({ data }) => {
-        setWidgets(data);
-      })
-      .catch(() => toast.error("Не удалось загрузить виджеты"))
-      .finally(() => setLoading(false));
+    load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  const load = async () => {
-    const [itemsRes, catsRes] = await Promise.all([
-      listWidgets(),
-      widgetCategoryApi.list(),
-    ]);
-    setWidgets(itemsRes.data);
-    setCategories(catsRes.data);
-  };
 
   const filtered = useMemo(() => {
     let result = widgets;
@@ -203,9 +207,9 @@ export default function WidgetsPage() {
       <CategoriesModal
         open={categoriesOpen}
         onClose={() => setCategoriesOpen(false)}
-        title="Категории виджетов"  // или соответствующее
+        title="Категории виджетов"
         categories={categories}
-        api={widgetCategoryApi}     // или соответствующий
+        api={widgetCategoryApi}
         onChanged={load}
       />
     </div>

@@ -498,7 +498,10 @@ function KpiEditorModal({ open, onClose, editingKpi, categories, onSaved }) {
               <option value="">— ручной ввод значения —</option>
               {metrics.map((m) => (
                 <option key={m.id} value={m.id}>
-                  {m.name} ({m.field_name})
+                 {m.datasource_category_name && `${m.datasource_category_name}/`}
+                 {m.datasource_name && `${m.datasource_name}/`}
+                 {m.dataset_name && `${m.dataset_name}/`}
+                 {m.name} ({m.field_name})
                 </option>
               ))}
             </Select>

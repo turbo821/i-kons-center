@@ -24,6 +24,7 @@ import {
   deleteWidget,
   getWidgetData,
 } from "../api/widgetApi";
+import { widgetCategoryApi } from "../api/categoryApi";
 
 import { useToast } from "../context/ToastContext";
 import { useConfirm } from "../context/ConfirmContext";
@@ -81,6 +82,10 @@ export default function WidgetBuilderPage() {
   const [selectedDimensionIds, setSelectedDimensionIds] = useState([]);
   const [filters, setFilters] = useState([]);
 
+  // Категория виджета (Task 1)
+  const [categories, setCategories] = useState([]);
+  const [categoryId, setCategoryId] = useState("");
+
   const [previewData, setPreviewData] = useState(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState(null);
@@ -96,6 +101,7 @@ export default function WidgetBuilderPage() {
 
   useEffect(() => {
     listDatasets().then(({ data }) => setDatasets(data)).catch(() => {});
+    widgetCategoryApi.list().then(({ data }) => setCategories(data)).catch(() => {});
   }, []);
 
 
@@ -107,6 +113,7 @@ export default function WidgetBuilderPage() {
         setTitle(w.title);
         setType(w.type);
         setDatasetId(w.dataset_id);
+        setCategoryId(w.category_id ? String(w.category_id) : "");
         setSelectedMetricIds((w.metrics || []).map((m) => m.id));
         setSelectedDimensionIds((w.dimensions || []).map((d) => d.id));
         setFilters(
@@ -161,6 +168,18 @@ export default function WidgetBuilderPage() {
   }, [datasetId]);
 
 
+  // Собираем общий payload: единое место, чтобы category_id не забывался
+  const buildPayload = () => ({
+    dataset_id: datasetId,
+    title,
+    type,
+    category_id: categoryId ? Number(categoryId) : null,
+    metric_ids: selectedMetricIds,
+    dimension_ids: selectedDimensionIds,
+    filters,
+  });
+
+
   const handlePreview = async () => {
     if (!datasetId) {
       toast.error("Выберите датасет");
@@ -170,16 +189,8 @@ export default function WidgetBuilderPage() {
     setPreviewError(null);
 
     try {
-      const payload = {
-        dataset_id: datasetId,
-        title,
-        type,
-        metric_ids: selectedMetricIds,
-        dimension_ids: selectedDimensionIds,
-        filters,
-      };
-
       let id = savedWidgetId;
+      const payload = buildPayload();
       if (id) {
         await updateWidget(id, payload);
       } else {
@@ -203,15 +214,7 @@ export default function WidgetBuilderPage() {
   const handleSaveAndExit = async () => {
     setSaving(true);
     try {
-      const payload = {
-        dataset_id: datasetId,
-        title,
-        type,
-        metric_ids: selectedMetricIds,
-        dimension_ids: selectedDimensionIds,
-        filters,
-      };
-
+      const payload = buildPayload();
       if (savedWidgetId) {
         await updateWidget(savedWidgetId, payload);
       } else {
@@ -249,13 +252,17 @@ export default function WidgetBuilderPage() {
   };
 
 
-  const handleCreateMetric = async (fieldId, aggregationType) => {
+  // Task 3: createMetric теперь принимает customName.
+  // Если он пустой — используем авто-формулу как раньше.
+  const handleCreateMetric = async (fieldId, aggregationType, customName) => {
     const field = fieldById[fieldId];
     if (!field) return;
+    const name = (customName || "").trim() ||
+      `${labelFor(aggregationType)} ${field.name}`;
     try {
       const { data } = await createMetric({
         field_id: fieldId,
-        name: `${labelFor(aggregationType)} ${field.name}`,
+        name,
         aggregation_type: aggregationType,
       });
       setAvailableMetrics((prev) =>
@@ -271,13 +278,14 @@ export default function WidgetBuilderPage() {
   };
 
 
-  const handleCreateDimension = async (fieldId) => {
+  const handleCreateDimension = async (fieldId, customName) => {
     const field = fieldById[fieldId];
     if (!field) return;
+    const name = (customName || "").trim() || `По ${field.name}`;
     try {
       const { data } = await createDimension({
         field_id: fieldId,
-        name: `По ${field.name}`,
+        name,
       });
       setAvailableDimensions((prev) =>
         prev.find((d) => d.id === data.id) ? prev : [...prev, data]
@@ -376,6 +384,22 @@ export default function WidgetBuilderPage() {
                     ? `${d.datasource_category_name}/` 
                     : ''}
                   {d.datasource_name}/{d.name}
+                </option>
+              ))}
+            </select>
+          </Section>
+
+          {/* Task 1: Категория виджета */}
+          <Section title="Категория">
+            <select
+              value={categoryId}
+              onChange={(e) => setCategoryId(e.target.value)}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+            >
+              <option value="">— без категории —</option>
+              {categories.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
                 </option>
               ))}
             </select>
@@ -570,9 +594,12 @@ function MultiSelect({ options, selected, onChange, emptyText }) {
 }
 
 
+// Task 3: добавлено поле кастомного имени для метрики.
+// Пустое имя = используется автоформула (как раньше).
 function NewMetricForm({ fields, onCreate }) {
   const [fieldId, setFieldId] = useState("");
   const [agg, setAgg] = useState("sum");
+  const [customName, setCustomName] = useState("");
 
   const field = fields.find((f) => f.id === Number(fieldId));
   const isNumeric = field
@@ -583,11 +610,16 @@ function NewMetricForm({ fields, onCreate }) {
     (a) => !a.numericOnly || isNumeric
   );
 
+  const autoName = field
+    ? `${labelFor(agg)} ${field.name}`
+    : "";
+
   const submit = (e) => {
     e.preventDefault();
     if (!fieldId) return;
-    onCreate(Number(fieldId), agg);
+    onCreate(Number(fieldId), agg, customName);
     setFieldId("");
+    setCustomName("");
   };
 
   return (
@@ -621,6 +653,18 @@ function NewMetricForm({ fields, onCreate }) {
         ))}
       </select>
 
+      <input
+        type="text"
+        value={customName}
+        onChange={(e) => setCustomName(e.target.value)}
+        placeholder={autoName || "Имя для отображения (необязательно)"}
+        className="w-full rounded-md border border-slate-300 px-2 py-1.5 text-xs"
+      />
+      <p className="text-[10px] leading-tight text-slate-500">
+        Это имя будет показано на графике (легенда, ось Y).
+        Если оставить пустым — будет «{autoName || "автоматическое имя"}».
+      </p>
+
       <button
         type="submit"
         disabled={!fieldId}
@@ -633,15 +677,21 @@ function NewMetricForm({ fields, onCreate }) {
 }
 
 
+// Task 3: добавлено поле кастомного имени для измерения.
 function NewDimensionForm({ fields, existing, onCreate }) {
   const [fieldId, setFieldId] = useState("");
+  const [customName, setCustomName] = useState("");
   const existingFieldIds = new Set(existing.map((d) => d.field_id));
+
+  const field = fields.find((f) => f.id === Number(fieldId));
+  const autoName = field ? `По ${field.name}` : "";
 
   const submit = (e) => {
     e.preventDefault();
     if (!fieldId) return;
-    onCreate(Number(fieldId));
+    onCreate(Number(fieldId), customName);
     setFieldId("");
+    setCustomName("");
   };
 
   return (
@@ -659,6 +709,18 @@ function NewDimensionForm({ fields, existing, onCreate }) {
           </option>
         ))}
       </select>
+
+      <input
+        type="text"
+        value={customName}
+        onChange={(e) => setCustomName(e.target.value)}
+        placeholder={autoName || "Имя для отображения (необязательно)"}
+        className="w-full rounded-md border border-slate-300 px-2 py-1.5 text-xs"
+      />
+      <p className="text-[10px] leading-tight text-slate-500">
+        Это имя будет показано на графике (легенда, ось X).
+        Если оставить пустым — будет «{autoName || "автоматическое имя"}».
+      </p>
 
       <button
         type="submit"
