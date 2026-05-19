@@ -5,4 +5,6 @@ export const listMetrics = (datasetId) =>
 
 export const createMetric = (data) => api.post("/metrics", data);
 
+export const updateMetric = (id, data) => api.put(`/metrics/${id}`, data);
+
 export const deleteMetric = (id) => api.delete(`/metrics/${id}`);

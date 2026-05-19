@@ -4,6 +4,8 @@ import {
   Trash2,
   Pencil,
   FolderTree,
+  Check,
+  X,
 } from "lucide-react";
 
 import {
@@ -15,7 +17,12 @@ import {
 import { kpiCategoryApi } from "../api/categoryApi";
 import CategoriesModal from "../components/CategoriesModal";
 import CategoryFilterChips from "../components/CategoryFilterChips";
-import { listMetrics, createMetric } from "../api/metricApi";
+import {
+  listMetrics,
+  createMetric,
+  updateMetric,
+  deleteMetric,
+} from "../api/metricApi";
 import { listDatasets, getDataset } from "../api/datasetApi";
 
 import { useAuth } from "../context/AuthContext";
@@ -167,7 +174,6 @@ export default function KpiPage() {
         onSortChange={setSort}
         sortOptions={SORT_OPTIONS}
       >
-        {/* Фильтр по направлению */}
         <div className="flex flex-wrap items-center gap-2">
           <FilterChip
             active={filterDirection === null}
@@ -203,8 +209,6 @@ export default function KpiPage() {
           totalCount={kpis.length}
         />
       )}
-
-
 
       {loading && <p className="text-slate-500">Загрузка...</p>}
 
@@ -251,14 +255,14 @@ export default function KpiPage() {
         onSaved={load}
       />
 
-    <CategoriesModal
-      open={categoriesOpen}
-      onClose={() => setCategoriesOpen(false)}
-      title="Категории KPI"
-      categories={categories}
-      api={kpiCategoryApi}
-      onChanged={load}
-    />
+      <CategoriesModal
+        open={categoriesOpen}
+        onClose={() => setCategoriesOpen(false)}
+        title="Категории KPI"
+        categories={categories}
+        api={kpiCategoryApi}
+        onChanged={load}
+      />
     </div>
   );
 }
@@ -282,6 +286,7 @@ function FilterChip({ active, onClick, children }) {
 
 function KpiEditorModal({ open, onClose, editingKpi, categories, onSaved }) {
   const toast = useToast();
+  const confirm = useConfirm();
   const isEdit = !!editingKpi;
 
   const [form, setForm] = useState({
@@ -300,14 +305,27 @@ function KpiEditorModal({ open, onClose, editingKpi, categories, onSaved }) {
   const [datasets, setDatasets] = useState([]);
   const [busy, setBusy] = useState(false);
 
+  // -----------------------------------------------------------------
+  // Создание метрики: каскад datasource → dataset → field → aggregation.
+  // creator.datasource_id хранится как строка (значение <select>).
+  // -----------------------------------------------------------------
   const [creatorOpen, setCreatorOpen] = useState(false);
   const [creator, setCreator] = useState({
+    datasource_id: "",
     dataset_id: "",
     field_id: "",
     aggregation: "sum",
   });
   const [creatorFields, setCreatorFields] = useState([]);
   const [creatorBusy, setCreatorBusy] = useState(false);
+
+  // -----------------------------------------------------------------
+  // Inline-редактирование выбранной метрики:
+  // позволяет переименовать или сменить агрегацию без открытия конструктора
+  // виджетов. Удаление — для метрик, ни к какому виджету не привязанных.
+  // -----------------------------------------------------------------
+  const [editingMetric, setEditingMetric] = useState(false);
+  const [metricEdit, setMetricEdit] = useState({ name: "", agg: "sum" });
 
   useEffect(() => {
     if (!open) return;
@@ -342,14 +360,44 @@ function KpiEditorModal({ open, onClose, editingKpi, categories, onSaved }) {
       });
     }
     setCreatorOpen(false);
-    setCreator({ dataset_id: "", field_id: "", aggregation: "sum" });
+    setCreator({
+      datasource_id: "",
+      dataset_id: "",
+      field_id: "",
+      aggregation: "sum",
+    });
     setCreatorFields([]);
+    setEditingMetric(false);
   }, [open, editingKpi]);
 
+  // Производный список источников: уникальные datasource_id из datasets.
+  const creatorDatasources = useMemo(() => {
+    const map = new Map();
+    for (const d of datasets) {
+      if (!d.datasource_id) continue;
+      if (!map.has(d.datasource_id)) {
+        map.set(d.datasource_id, {
+          id: d.datasource_id,
+          name: d.datasource_name,
+          category_name: d.datasource_category_name,
+        });
+      }
+    }
+    return Array.from(map.values()).sort((a, b) =>
+      (a.name || "").localeCompare(b.name || "")
+    );
+  }, [datasets]);
+
+  const creatorDatasetsForCurrent = useMemo(() => {
+    if (!creator.datasource_id) return [];
+    const dsid = Number(creator.datasource_id);
+    return datasets.filter((d) => d.datasource_id === dsid);
+  }, [datasets, creator.datasource_id]);
+
+  // Подгрузка полей датасета при выборе
   useEffect(() => {
     if (!creator.dataset_id) {
       setCreatorFields([]);
-      setCreator((c) => ({ ...c, field_id: "" }));
       return;
     }
     getDataset(creator.dataset_id).then(({ data }) => {
@@ -424,6 +472,67 @@ function KpiEditorModal({ open, onClose, editingKpi, categories, onSaved }) {
     }
   };
 
+  // ---- Inline edit/delete выбранной метрики ----
+
+  const selectedMetric = useMemo(
+    () => metrics.find((m) => m.id === Number(form.metric_id)),
+    [metrics, form.metric_id]
+  );
+
+  const startEditMetric = () => {
+    if (!selectedMetric) return;
+    setMetricEdit({
+      name: selectedMetric.name,
+      agg: selectedMetric.aggregation_type,
+    });
+    setEditingMetric(true);
+  };
+
+  const saveMetricEdit = async () => {
+    if (!selectedMetric) return;
+    const patch = {};
+    if (metricEdit.name.trim() && metricEdit.name !== selectedMetric.name) {
+      patch.name = metricEdit.name.trim();
+    }
+    if (metricEdit.agg !== selectedMetric.aggregation_type) {
+      patch.aggregation_type = metricEdit.agg;
+    }
+    if (Object.keys(patch).length === 0) {
+      setEditingMetric(false);
+      return;
+    }
+    try {
+      const { data } = await updateMetric(selectedMetric.id, patch);
+      setMetrics((prev) =>
+        prev.map((m) => (m.id === data.id ? data : m))
+      );
+      toast.success("Метрика обновлена");
+      setEditingMetric(false);
+    } catch (e) {
+      toast.error(e?.response?.data?.message || "Ошибка");
+    }
+  };
+
+  const deleteSelectedMetric = async () => {
+    if (!selectedMetric) return;
+    const ok = await confirm({
+      title: "Удалить метрику?",
+      body: `«${selectedMetric.name}» будет удалена. Действие невозможно, если метрика используется в виджетах.`,
+      confirmText: "Удалить",
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await deleteMetric(selectedMetric.id);
+      setMetrics((prev) => prev.filter((m) => m.id !== selectedMetric.id));
+      setForm((f) => ({ ...f, metric_id: "" }));
+      toast.success("Метрика удалена");
+    } catch (e) {
+      toast.error(e?.response?.data?.message || "Ошибка");
+    }
+  };
+
+  // Доступные агрегации для текущего поля в creator (по типу)
   const creatorField = creatorFields.find(
     (f) => f.id === Number(creator.field_id)
   );
@@ -432,6 +541,12 @@ function KpiEditorModal({ open, onClose, editingKpi, categories, onSaved }) {
   const allowedAggs = AGGREGATIONS.filter(
     (a) => !a.numericOnly || isNumericField
   );
+
+  // Агрегации для inline-редактирования выбранной метрики:
+  // ориентируемся на dataset_field из самой метрики (через её field у нас
+  // нет data_type в payload — поэтому добавляем все агрегации, бэкенд
+  // отклонит несовместимые).
+  const editAggOptions = AGGREGATIONS;
 
   return (
     <Modal
@@ -494,20 +609,96 @@ function KpiEditorModal({ open, onClose, editingKpi, categories, onSaved }) {
 
           <div>
             <Label>Метрика (для автоматического расчёта)</Label>
-            <Select value={form.metric_id} onChange={change("metric_id")}>
-              <option value="">— ручной ввод значения —</option>
-              {metrics.map((m) => (
-                <option key={m.id} value={m.id}>
-                 {m.datasource_category_name && `${m.datasource_category_name}/`}
-                 {m.datasource_name && `${m.datasource_name}/`}
-                 {m.dataset_name && `${m.dataset_name}/`}
-                 {m.name} ({m.field_name})
-                </option>
-              ))}
-            </Select>
+
+            {editingMetric && selectedMetric ? (
+              // Inline-редактирование выбранной метрики
+              <div className="space-y-2 rounded-md bg-slate-50 p-2">
+                <input
+                  type="text"
+                  value={metricEdit.name}
+                  onChange={(e) =>
+                    setMetricEdit((s) => ({ ...s, name: e.target.value }))
+                  }
+                  className="w-full rounded-md border border-slate-300 px-2 py-1.5 text-xs"
+                  placeholder="Имя метрики"
+                />
+                <select
+                  value={metricEdit.agg}
+                  onChange={(e) =>
+                    setMetricEdit((s) => ({ ...s, agg: e.target.value }))
+                  }
+                  className="w-full rounded-md border border-slate-300 px-2 py-1.5 text-xs"
+                >
+                  {editAggOptions.map((a) => (
+                    <option key={a.value} value={a.value}>
+                      {a.label}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[10px] text-slate-500">
+                  Поле: {selectedMetric.field_name}
+                </p>
+                <div className="flex justify-end gap-1 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setEditingMetric(false)}
+                    className="rounded p-1 text-slate-500 hover:bg-slate-100"
+                    title="Отмена"
+                  >
+                    <X size={14} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={saveMetricEdit}
+                    className="rounded p-1 text-emerald-600 hover:bg-emerald-50"
+                    title="Сохранить"
+                  >
+                    <Check size={14} />
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1">
+                <Select
+                  value={form.metric_id}
+                  onChange={change("metric_id")}
+                >
+                  <option value="">— ручной ввод значения —</option>
+                  {metrics.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.datasource_category_name && `${m.datasource_category_name}/`}
+                      {m.datasource_name && `${m.datasource_name}/`}
+                      {m.dataset_name && `${m.dataset_name}/`}
+                      {m.name} ({m.field_name})
+                    </option>
+                  ))}
+                </Select>
+
+                {selectedMetric && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={startEditMetric}
+                      className="shrink-0 rounded p-1.5 text-slate-500 hover:bg-slate-100"
+                      title="Редактировать метрику"
+                    >
+                      <Pencil size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={deleteSelectedMetric}
+                      className="shrink-0 rounded p-1.5 text-red-600 hover:bg-red-50"
+                      title="Удалить метрику"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
           </div>
 
-          {!form.metric_id && !creatorOpen && (
+          {!form.metric_id && !creatorOpen && !editingMetric && (
             <div>
               <Label>Текущее значение (вручную)</Label>
               <Input
@@ -526,25 +717,51 @@ function KpiEditorModal({ open, onClose, editingKpi, categories, onSaved }) {
               </p>
 
               <div>
-                <Label>Набор данных</Label>
+                <Label>Источник данных</Label>
                 <Select
-                  value={creator.dataset_id}
+                  value={creator.datasource_id}
                   onChange={(e) =>
                     setCreator({
-                      dataset_id: e.target.value,
+                      datasource_id: e.target.value,
+                      dataset_id: "",
                       field_id: "",
                       aggregation: "sum",
                     })
                   }
                 >
                   <option value="">— выберите —</option>
-                  {datasets.map((d) => (
-                    <option key={d.id} value={d.id}>
-                      {d.name}
+                  {creatorDatasources.map((ds) => (
+                    <option key={ds.id} value={ds.id}>
+                      {ds.category_name ? `${ds.category_name}/` : ""}
+                      {ds.name}
                     </option>
                   ))}
                 </Select>
               </div>
+
+              {creator.datasource_id && (
+                <div>
+                  <Label>Набор данных</Label>
+                  <Select
+                    value={creator.dataset_id}
+                    onChange={(e) =>
+                      setCreator((c) => ({
+                        ...c,
+                        dataset_id: e.target.value,
+                        field_id: "",
+                        aggregation: "sum",
+                      }))
+                    }
+                  >
+                    <option value="">— выберите —</option>
+                    {creatorDatasetsForCurrent.map((d) => (
+                      <option key={d.id} value={d.id}>
+                        {d.name}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+              )}
 
               {creator.dataset_id && (
                 <div className="grid grid-cols-2 gap-2">
@@ -632,7 +849,7 @@ function KpiEditorModal({ open, onClose, editingKpi, categories, onSaved }) {
         </div>
 
         <div className="col-span-2">
-          <Label>Документация</Label>
+          <Label>Формула (документация)</Label>
           <Input
             value={form.formula}
             onChange={change("formula")}

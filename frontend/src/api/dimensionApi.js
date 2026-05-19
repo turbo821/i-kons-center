@@ -5,4 +5,6 @@ export const listDimensions = (datasetId) =>
 
 export const createDimension = (data) => api.post("/dimensions", data);
 
+export const updateDimension = (id, data) => api.put(`/dimensions/${id}`, data);
+
 export const deleteDimension = (id) => api.delete(`/dimensions/${id}`);

@@ -4,6 +4,7 @@ REST API для измерений (Dimension).
 Маршруты:
     GET    /api/dimensions                  — список (?dataset_id=...)
     POST   /api/dimensions                  — создать или вернуть существующую
+    PUT    /api/dimensions/<id>             — обновить (name / field_id)
     DELETE /api/dimensions/<id>             — удалить
 """
 
@@ -70,6 +71,36 @@ def create_dimension():
     db.session.commit()
 
     return jsonify(dim.to_dict()), 201
+
+
+@dimension_bp.route("/<int:dim_id>", methods=["PUT"])
+@role_required(*EDITOR_ROLES)
+def update_dimension(dim_id):
+    """
+    Обновить измерение. Допустимы изменения:
+      - name (отображаемое имя на оси X / легенде)
+      - field_id (перепривязка к другому полю)
+    """
+    dim = db.session.get(Dimension, dim_id)
+    if dim is None:
+        return jsonify({"message": "Не найдено"}), 404
+
+    data = request.json or {}
+
+    if "field_id" in data and data["field_id"] is not None:
+        new_field = db.session.get(DatasetField, data["field_id"])
+        if not new_field:
+            return jsonify({"message": "Поле не найдено"}), 404
+        dim.field_id = data["field_id"]
+
+    if "name" in data:
+        new_name = (data.get("name") or "").strip()
+        if not new_name:
+            return jsonify({"message": "Имя не может быть пустым"}), 400
+        dim.name = new_name
+
+    db.session.commit()
+    return jsonify(dim.to_dict())
 
 
 @dimension_bp.route("/<int:dim_id>", methods=["DELETE"])

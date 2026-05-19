@@ -4,6 +4,7 @@ REST API для метрик (вычисляемых показателей).
 Маршруты:
     GET    /api/metrics                       — список (?dataset_id=...)
     POST   /api/metrics                       — создать или вернуть существующую
+    PUT    /api/metrics/<id>                  — обновить (name / aggregation_type / field_id)
     DELETE /api/metrics/<id>                  — удалить
 """
 
@@ -19,6 +20,34 @@ from app.services.widget_data_service import AGGREGATION_FUNCS
 metric_bp = Blueprint("metrics", __name__, url_prefix="/api/metrics")
 
 EDITOR_ROLES = ("admin", "expert")
+
+
+# Агрегации, разрешённые только на числовых полях. count и count_distinct
+# работают на любых типах, поэтому в этот набор не входят.
+_NUMERIC_ONLY_AGGS = ("sum", "avg")
+
+
+def _validate_aggregation(aggregation_type, field):
+    """
+    Возвращает строку с ошибкой или None если всё ок.
+    Проверяем: 1) известная агрегация, 2) совместимость с типом поля.
+    """
+    if aggregation_type not in AGGREGATION_FUNCS:
+        return (
+            f"Недопустимый тип агрегации. Разрешены: "
+            f"{', '.join(AGGREGATION_FUNCS.keys())}"
+        )
+
+    if (
+        aggregation_type in _NUMERIC_ONLY_AGGS
+        and field.data_type not in ("integer", "float")
+    ):
+        return (
+            f"Агрегация '{aggregation_type}' "
+            f"применима только к числовым полям"
+        )
+
+    return None
 
 
 @metric_bp.route("", methods=["GET"])
@@ -58,28 +87,13 @@ def create_metric():
             "message": f"Не заданы поля: {', '.join(missing)}"
         }), 400
 
-    if data["aggregation_type"] not in AGGREGATION_FUNCS:
-        return jsonify({
-            "message": (
-                f"Недопустимый тип агрегации. Разрешены: "
-                f"{', '.join(AGGREGATION_FUNCS.keys())}"
-            )
-        }), 400
-
-    # Проверяем существование поля
     field = db.session.get(DatasetField, data["field_id"])
     if not field:
         return jsonify({"message": "Поле не найдено"}), 404
 
-    # Защита: count_distinct/count работают на любом типе,
-    # но sum/avg/min/max — только на числах.
-    if data["aggregation_type"] in ("sum", "avg") and field.data_type not in ("integer", "float"):
-        return jsonify({
-            "message": (
-                f"Агрегация '{data['aggregation_type']}' "
-                f"применима только к числовым полям"
-            )
-        }), 400
+    err = _validate_aggregation(data["aggregation_type"], field)
+    if err:
+        return jsonify({"message": err}), 400
 
     # Идемпотентность: ищем существующую
     existing = db.session.query(Metric).filter_by(
@@ -99,6 +113,52 @@ def create_metric():
     db.session.commit()
 
     return jsonify(metric.to_dict()), 201
+
+
+@metric_bp.route("/<int:metric_id>", methods=["PUT"])
+@role_required(*EDITOR_ROLES)
+def update_metric(metric_id):
+    """
+    Обновить метрику. Допустимы изменения:
+      - name (отображаемое имя — оно идёт на графики)
+      - aggregation_type
+      - field_id (можно перепривязать к другому полю того же датасета)
+
+    Меняем поэлементно: то, что не пришло — не трогаем.
+    """
+    metric = db.session.get(Metric, metric_id)
+    if metric is None:
+        return jsonify({"message": "Не найдено"}), 404
+
+    data = request.json or {}
+
+    # field_id: проверяем существование и совместимость с агрегацией.
+    # Берём «целевую» агрегацию из payload, если она пришла, иначе текущую.
+    new_field = metric.field
+    if "field_id" in data and data["field_id"] is not None:
+        new_field = db.session.get(DatasetField, data["field_id"])
+        if not new_field:
+            return jsonify({"message": "Поле не найдено"}), 404
+
+    new_agg = data.get("aggregation_type", metric.aggregation_type)
+    err = _validate_aggregation(new_agg, new_field)
+    if err:
+        return jsonify({"message": err}), 400
+
+    if "name" in data:
+        new_name = (data.get("name") or "").strip()
+        if not new_name:
+            return jsonify({"message": "Имя не может быть пустым"}), 400
+        metric.name = new_name
+
+    if "aggregation_type" in data:
+        metric.aggregation_type = data["aggregation_type"]
+
+    if "field_id" in data and data["field_id"] is not None:
+        metric.field_id = data["field_id"]
+
+    db.session.commit()
+    return jsonify(metric.to_dict())
 
 
 @metric_bp.route("/<int:metric_id>", methods=["DELETE"])

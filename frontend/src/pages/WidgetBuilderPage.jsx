@@ -11,12 +11,25 @@ import {
   PieChart as PieIcon,
   Table as TableIcon,
   Hash,
-  Info
+  Info,
+  Pencil,
+  Check,
+  X,
 } from "lucide-react";
 
 import { listDatasets, getDataset } from "../api/datasetApi";
-import { listMetrics, createMetric } from "../api/metricApi";
-import { listDimensions, createDimension } from "../api/dimensionApi";
+import {
+  listMetrics,
+  createMetric,
+  updateMetric,
+  deleteMetric,
+} from "../api/metricApi";
+import {
+  listDimensions,
+  createDimension,
+  updateDimension,
+  deleteDimension,
+} from "../api/dimensionApi";
 import {
   getWidget,
   createWidget,
@@ -71,7 +84,12 @@ export default function WidgetBuilderPage() {
   const isEdit = !!widgetId;
 
   const [datasets, setDatasets] = useState([]);
+
+  // Каскад источник → набор данных.
+  // datasourceId хранится как строка (значение <select>), datasetId — число.
+  const [datasourceId, setDatasourceId] = useState("");
   const [datasetId, setDatasetId] = useState(null);
+
   const [datasetFields, setDatasetFields] = useState([]);
   const [availableMetrics, setAvailableMetrics] = useState([]);
   const [availableDimensions, setAvailableDimensions] = useState([]);
@@ -82,7 +100,6 @@ export default function WidgetBuilderPage() {
   const [selectedDimensionIds, setSelectedDimensionIds] = useState([]);
   const [filters, setFilters] = useState([]);
 
-  // Категория виджета (Task 1)
   const [categories, setCategories] = useState([]);
   const [categoryId, setCategoryId] = useState("");
 
@@ -97,6 +114,32 @@ export default function WidgetBuilderPage() {
     () => Object.fromEntries(datasetFields.map((f) => [f.id, f])),
     [datasetFields]
   );
+
+  // Производный список источников: уникализируем datasets по datasource_id,
+  // чтобы получить варианты для верхнего селекта каскада.
+  const datasources = useMemo(() => {
+    const map = new Map();
+    for (const d of datasets) {
+      if (!d.datasource_id) continue;
+      if (!map.has(d.datasource_id)) {
+        map.set(d.datasource_id, {
+          id: d.datasource_id,
+          name: d.datasource_name,
+          category_name: d.datasource_category_name,
+        });
+      }
+    }
+    return Array.from(map.values()).sort((a, b) =>
+      (a.name || "").localeCompare(b.name || "")
+    );
+  }, [datasets]);
+
+  // Наборы данных, отфильтрованные по выбранному источнику.
+  const datasetsForCurrentDatasource = useMemo(() => {
+    if (!datasourceId) return [];
+    const dsid = Number(datasourceId);
+    return datasets.filter((d) => d.datasource_id === dsid);
+  }, [datasets, datasourceId]);
 
 
   useEffect(() => {
@@ -113,6 +156,9 @@ export default function WidgetBuilderPage() {
         setTitle(w.title);
         setType(w.type);
         setDatasetId(w.dataset_id);
+        // При редактировании datasource_id виджета берём из его dataset
+        // (нужно для отображения корректного значения в верхнем селекте).
+        // Делаем это после того, как datasets подгрузятся.
         setCategoryId(w.category_id ? String(w.category_id) : "");
         setSelectedMetricIds((w.metrics || []).map((m) => m.id));
         setSelectedDimensionIds((w.dimensions || []).map((d) => d.id));
@@ -131,6 +177,16 @@ export default function WidgetBuilderPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isEdit, widgetId]);
 
+  // Когда datasets подгрузились и есть выбранный dataset (например, при
+  // редактировании виджета) — подставляем datasource_id в верхний селект.
+  useEffect(() => {
+    if (!datasetId || datasets.length === 0) return;
+    const ds = datasets.find((d) => d.id === datasetId);
+    if (ds && ds.datasource_id) {
+      setDatasourceId(String(ds.datasource_id));
+    }
+  }, [datasetId, datasets]);
+
 
   useEffect(() => {
     if (!savedWidgetId) return;
@@ -148,27 +204,37 @@ export default function WidgetBuilderPage() {
   }, [savedWidgetId]);
 
 
-  useEffect(() => {
-    if (!datasetId) {
+  // Загружаем поля датасета и доступные метрики/измерения при смене dataset.
+  // Вынесено в отдельную функцию: после редактирования метрики/измерения
+  // (или их создания/удаления) мы перезапускаем эту же логику, чтобы
+  // подтянуть свежие данные с сервера.
+  const reloadDatasetMeta = async (dsId) => {
+    if (!dsId) {
       setDatasetFields([]);
       setAvailableMetrics([]);
       setAvailableDimensions([]);
       return;
     }
-    (async () => {
+    try {
       const [dsRes, metRes, dimRes] = await Promise.all([
-        getDataset(datasetId),
-        listMetrics(datasetId),
-        listDimensions(datasetId),
+        getDataset(dsId),
+        listMetrics(dsId),
+        listDimensions(dsId),
       ]);
       setDatasetFields(dsRes.data.fields || []);
       setAvailableMetrics(metRes.data);
       setAvailableDimensions(dimRes.data);
-    })();
+    } catch (e) {
+      toast.error("Не удалось загрузить мета-данные");
+    }
+  };
+
+  useEffect(() => {
+    reloadDatasetMeta(datasetId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [datasetId]);
 
 
-  // Собираем общий payload: единое место, чтобы category_id не забывался
   const buildPayload = () => ({
     dataset_id: datasetId,
     title,
@@ -252,8 +318,6 @@ export default function WidgetBuilderPage() {
   };
 
 
-  // Task 3: createMetric теперь принимает customName.
-  // Если он пустой — используем авто-формулу как раньше.
   const handleCreateMetric = async (fieldId, aggregationType, customName) => {
     const field = fieldById[fieldId];
     if (!field) return;
@@ -294,6 +358,69 @@ export default function WidgetBuilderPage() {
         prev.includes(data.id) ? prev : [...prev, data.id]
       );
       toast.success("Измерение создано");
+    } catch (e) {
+      toast.error(e?.response?.data?.message || "Ошибка");
+    }
+  };
+
+
+  // Обновление метрики/измерения — после успеха перезагружаем мета,
+  // чтобы все списки и предпросмотр получили актуальные имена.
+  const handleUpdateMetric = async (metricId, patch) => {
+    try {
+      const { data } = await updateMetric(metricId, patch);
+      setAvailableMetrics((prev) =>
+        prev.map((m) => (m.id === metricId ? data : m))
+      );
+      toast.success("Метрика обновлена");
+    } catch (e) {
+      toast.error(e?.response?.data?.message || "Ошибка");
+    }
+  };
+
+  const handleDeleteMetric = async (metricId, name) => {
+    const ok = await confirm({
+      title: "Удалить метрику?",
+      body: `«${name}» будет удалена. Действие невозможно, если метрика используется в виджетах.`,
+      confirmText: "Удалить",
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await deleteMetric(metricId);
+      setAvailableMetrics((prev) => prev.filter((m) => m.id !== metricId));
+      setSelectedMetricIds((prev) => prev.filter((id) => id !== metricId));
+      toast.success("Метрика удалена");
+    } catch (e) {
+      toast.error(e?.response?.data?.message || "Ошибка");
+    }
+  };
+
+  const handleUpdateDimension = async (dimId, patch) => {
+    try {
+      const { data } = await updateDimension(dimId, patch);
+      setAvailableDimensions((prev) =>
+        prev.map((d) => (d.id === dimId ? data : d))
+      );
+      toast.success("Измерение обновлено");
+    } catch (e) {
+      toast.error(e?.response?.data?.message || "Ошибка");
+    }
+  };
+
+  const handleDeleteDimension = async (dimId, name) => {
+    const ok = await confirm({
+      title: "Удалить измерение?",
+      body: `«${name}» будет удалено. Действие невозможно, если измерение используется в виджетах.`,
+      confirmText: "Удалить",
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await deleteDimension(dimId);
+      setAvailableDimensions((prev) => prev.filter((d) => d.id !== dimId));
+      setSelectedDimensionIds((prev) => prev.filter((id) => id !== dimId));
+      toast.success("Измерение удалено");
     } catch (e) {
       toast.error(e?.response?.data?.message || "Ошибка");
     }
@@ -344,6 +471,7 @@ export default function WidgetBuilderPage() {
 
         <div className="space-y-4">
 
+          {/* Каскад: сначала источник, потом набор данных */}
           <Section
             title={
               <div className="flex items-center gap-1">
@@ -353,43 +481,66 @@ export default function WidgetBuilderPage() {
                   onMouseEnter={() => setShowDsHelp(true)}
                   onMouseLeave={() => setShowDsHelp(false)}
                   className="relative rounded p-0.5 text-slate-400 hover:text-slate-700"
-                  aria-label="Подсказка по формату отображения данных"
+                  aria-label="Подсказка"
                 >
                   <Info size={14} />
                   {showDsHelp && (
                     <div className="absolute bottom-full left-0 z-10 mb-1 w-96 rounded-lg border border-slate-200 bg-slate-900 p-3 text-left text-xs text-white shadow-lg">
                       <pre className="whitespace-pre-wrap break-words font-mono text-xs">
-                        категория/источник данных/набор данных
+                        Сначала выберите источник данных, затем — конкретный
+                        набор данных внутри него.
                       </pre>
                     </div>
                   )}
                 </button>
               </div>
-            } >
+            }
+          >
             <select
-              value={datasetId || ""}
+              value={datasourceId}
               onChange={(e) => {
-                const id = Number(e.target.value) || null;
-                setDatasetId(id);
+                setDatasourceId(e.target.value);
+                // При смене источника сбрасываем дочерние выборы
+                setDatasetId(null);
                 setSelectedMetricIds([]);
                 setSelectedDimensionIds([]);
                 setFilters([]);
               }}
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
             >
-              <option value="">— выберите набор данных —</option>
-              {datasets.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.datasource_category_name 
-                    ? `${d.datasource_category_name}/` 
-                    : ''}
-                  {d.datasource_name}/{d.name}
+              <option value="">— выберите источник —</option>
+              {datasources.map((ds) => (
+                <option key={ds.id} value={ds.id}>
+                  {ds.category_name ? `${ds.category_name}/` : ""}
+                  {ds.name}
                 </option>
               ))}
             </select>
+
+            {datasourceId && (
+              <div className="mt-2">
+                <select
+                  value={datasetId || ""}
+                  onChange={(e) => {
+                    const id = Number(e.target.value) || null;
+                    setDatasetId(id);
+                    setSelectedMetricIds([]);
+                    setSelectedDimensionIds([]);
+                    setFilters([]);
+                  }}
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                >
+                  <option value="">— выберите набор данных —</option>
+                  {datasetsForCurrentDatasource.map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {d.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
           </Section>
 
-          {/* Task 1: Категория виджета */}
           <Section title="Категория">
             <select
               value={categoryId}
@@ -429,14 +580,19 @@ export default function WidgetBuilderPage() {
 
           {datasetId && (
             <Section title="Метрики">
-              <MultiSelect
-                options={availableMetrics.map((m) => ({
-                  value: m.id,
-                  label: `${m.name} (${m.field_name})`,
-                }))}
-                selected={selectedMetricIds}
-                onChange={setSelectedMetricIds}
-                emptyText="Нет созданных метрик"
+              <MetricList
+                metrics={availableMetrics}
+                fields={datasetFields}
+                selectedIds={selectedMetricIds}
+                onToggle={(id) =>
+                  setSelectedMetricIds((prev) =>
+                    prev.includes(id)
+                      ? prev.filter((x) => x !== id)
+                      : [...prev, id]
+                  )
+                }
+                onUpdate={handleUpdateMetric}
+                onDelete={handleDeleteMetric}
               />
 
               <details className="mt-3 rounded-lg bg-slate-50 p-3">
@@ -453,14 +609,19 @@ export default function WidgetBuilderPage() {
 
           {datasetId && (
             <Section title="Измерения (группировка)">
-              <MultiSelect
-                options={availableDimensions.map((d) => ({
-                  value: d.id,
-                  label: `${d.name} (${d.field_name})`,
-                }))}
-                selected={selectedDimensionIds}
-                onChange={setSelectedDimensionIds}
-                emptyText="Нет созданных измерений"
+              <DimensionList
+                dimensions={availableDimensions}
+                fields={datasetFields}
+                selectedIds={selectedDimensionIds}
+                onToggle={(id) =>
+                  setSelectedDimensionIds((prev) =>
+                    prev.includes(id)
+                      ? prev.filter((x) => x !== id)
+                      : [...prev, id]
+                  )
+                }
+                onUpdate={handleUpdateDimension}
+                onDelete={handleDeleteDimension}
               />
 
               <details className="mt-3 rounded-lg bg-slate-50 p-3">
@@ -561,41 +722,251 @@ function Section({ title, children }) {
 }
 
 
-function MultiSelect({ options, selected, onChange, emptyText }) {
-  if (options.length === 0) {
-    return <p className="text-xs text-slate-500">{emptyText}</p>;
+// Список метрик с inline-редактированием.
+// Редактируем имя и тип агрегации; для смены поля датасета — отдельная
+// форма (через "Создать метрику" + удаление старой), потому что менять
+// field на лету у уже выбранной метрики сбивает кэшированные данные
+// виджетов, использующих эту метрику.
+function MetricList({ metrics, fields, selectedIds, onToggle, onUpdate, onDelete }) {
+  const [editingId, setEditingId] = useState(null);
+  const [editName, setEditName] = useState("");
+  const [editAgg, setEditAgg] = useState("sum");
+
+  if (metrics.length === 0) {
+    return <p className="text-xs text-slate-500">Нет созданных метрик</p>;
   }
 
-  const toggle = (val) =>
-    onChange(
-      selected.includes(val)
-        ? selected.filter((x) => x !== val)
-        : [...selected, val]
-    );
+  const startEdit = (m) => {
+    setEditingId(m.id);
+    setEditName(m.name);
+    setEditAgg(m.aggregation_type);
+  };
+
+  const cancel = () => setEditingId(null);
+
+  const save = async (m) => {
+    const patch = {};
+    if (editName.trim() && editName !== m.name) patch.name = editName.trim();
+    if (editAgg !== m.aggregation_type) patch.aggregation_type = editAgg;
+    if (Object.keys(patch).length > 0) {
+      await onUpdate(m.id, patch);
+    }
+    setEditingId(null);
+  };
 
   return (
     <div className="space-y-1.5">
-      {options.map((o) => (
-        <label
-          key={o.value}
-          className="flex cursor-pointer items-center gap-2 rounded-lg p-2 text-sm hover:bg-slate-50"
-        >
-          <input
-            type="checkbox"
-            checked={selected.includes(o.value)}
-            onChange={() => toggle(o.value)}
-            className="rounded"
-          />
-          <span>{o.label}</span>
-        </label>
-      ))}
+      {metrics.map((m) => {
+        const isEditing = editingId === m.id;
+        const field = fields.find((f) => f.id === m.field_id);
+        const isNumeric = field
+          ? ["integer", "float"].includes(field.data_type)
+          : false;
+        const allowedAggs = AGGREGATIONS.filter(
+          (a) => !a.numericOnly || isNumeric
+        );
+
+        return (
+          <div
+            key={m.id}
+            className="flex items-start gap-2 rounded-lg p-2 hover:bg-slate-50"
+          >
+            <input
+              type="checkbox"
+              checked={selectedIds.includes(m.id)}
+              onChange={() => onToggle(m.id)}
+              disabled={isEditing}
+              className="mt-1 rounded"
+            />
+
+            {isEditing ? (
+              <div className="flex-1 space-y-1.5">
+                <input
+                  type="text"
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  className="w-full rounded-md border border-slate-300 px-2 py-1 text-xs"
+                  placeholder="Имя"
+                  autoFocus
+                />
+                <select
+                  value={editAgg}
+                  onChange={(e) => setEditAgg(e.target.value)}
+                  className="w-full rounded-md border border-slate-300 px-2 py-1 text-xs"
+                >
+                  {allowedAggs.map((a) => (
+                    <option key={a.value} value={a.value}>
+                      {a.label}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[10px] text-slate-500">
+                  Поле: {m.field_name} [{field?.data_type || "?"}]
+                </p>
+              </div>
+            ) : (
+              <label className="flex-1 cursor-pointer text-sm">
+                <span className="block">{m.name}</span>
+                <span className="block text-[11px] text-slate-500">
+                  {m.field_name} · {labelFor(m.aggregation_type)}
+                </span>
+              </label>
+            )}
+
+            <div className="flex shrink-0 gap-0.5">
+              {isEditing ? (
+                <>
+                  <button
+                    onClick={() => save(m)}
+                    className="rounded p-1 text-emerald-600 hover:bg-emerald-50"
+                    title="Сохранить"
+                  >
+                    <Check size={14} />
+                  </button>
+                  <button
+                    onClick={cancel}
+                    className="rounded p-1 text-slate-500 hover:bg-slate-100"
+                    title="Отмена"
+                  >
+                    <X size={14} />
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    onClick={() => startEdit(m)}
+                    className="rounded p-1 text-slate-500 hover:bg-slate-100"
+                    title="Редактировать"
+                  >
+                    <Pencil size={13} />
+                  </button>
+                  <button
+                    onClick={() => onDelete(m.id, m.name)}
+                    className="rounded p-1 text-red-600 hover:bg-red-50"
+                    title="Удалить"
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
 
 
-// Task 3: добавлено поле кастомного имени для метрики.
-// Пустое имя = используется автоформула (как раньше).
+function DimensionList({ dimensions, fields, selectedIds, onToggle, onUpdate, onDelete }) {
+  const [editingId, setEditingId] = useState(null);
+  const [editName, setEditName] = useState("");
+
+  if (dimensions.length === 0) {
+    return <p className="text-xs text-slate-500">Нет созданных измерений</p>;
+  }
+
+  const startEdit = (d) => {
+    setEditingId(d.id);
+    setEditName(d.name);
+  };
+
+  const cancel = () => setEditingId(null);
+
+  const save = async (d) => {
+    if (editName.trim() && editName !== d.name) {
+      await onUpdate(d.id, { name: editName.trim() });
+    }
+    setEditingId(null);
+  };
+
+  return (
+    <div className="space-y-1.5">
+      {dimensions.map((d) => {
+        const isEditing = editingId === d.id;
+        const field = fields.find((f) => f.id === d.field_id);
+
+        return (
+          <div
+            key={d.id}
+            className="flex items-start gap-2 rounded-lg p-2 hover:bg-slate-50"
+          >
+            <input
+              type="checkbox"
+              checked={selectedIds.includes(d.id)}
+              onChange={() => onToggle(d.id)}
+              disabled={isEditing}
+              className="mt-1 rounded"
+            />
+
+            {isEditing ? (
+              <div className="flex-1 space-y-1.5">
+                <input
+                  type="text"
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  className="w-full rounded-md border border-slate-300 px-2 py-1 text-xs"
+                  placeholder="Имя"
+                  autoFocus
+                />
+                <p className="text-[10px] text-slate-500">
+                  Поле: {d.field_name} [{field?.data_type || "?"}]
+                </p>
+              </div>
+            ) : (
+              <label className="flex-1 cursor-pointer text-sm">
+                <span className="block">{d.name}</span>
+                <span className="block text-[11px] text-slate-500">
+                  {d.field_name}
+                </span>
+              </label>
+            )}
+
+            <div className="flex shrink-0 gap-0.5">
+              {isEditing ? (
+                <>
+                  <button
+                    onClick={() => save(d)}
+                    className="rounded p-1 text-emerald-600 hover:bg-emerald-50"
+                    title="Сохранить"
+                  >
+                    <Check size={14} />
+                  </button>
+                  <button
+                    onClick={cancel}
+                    className="rounded p-1 text-slate-500 hover:bg-slate-100"
+                    title="Отмена"
+                  >
+                    <X size={14} />
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    onClick={() => startEdit(d)}
+                    className="rounded p-1 text-slate-500 hover:bg-slate-100"
+                    title="Редактировать"
+                  >
+                    <Pencil size={13} />
+                  </button>
+                  <button
+                    onClick={() => onDelete(d.id, d.name)}
+                    className="rounded p-1 text-red-600 hover:bg-red-50"
+                    title="Удалить"
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+
 function NewMetricForm({ fields, onCreate }) {
   const [fieldId, setFieldId] = useState("");
   const [agg, setAgg] = useState("sum");
@@ -677,7 +1048,6 @@ function NewMetricForm({ fields, onCreate }) {
 }
 
 
-// Task 3: добавлено поле кастомного имени для измерения.
 function NewDimensionForm({ fields, existing, onCreate }) {
   const [fieldId, setFieldId] = useState("");
   const [customName, setCustomName] = useState("");

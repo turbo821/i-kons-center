@@ -28,6 +28,11 @@ from app.services.type_mapping import (
 # Лимит строк для пробного чтения и предпросмотра
 PREVIEW_ROW_LIMIT = 1000
 
+# Сколько строк читать для определения типа поля в результирующем запросе.
+# Маленькое число держит inspect_dataset быстрым, но 100 строк уже достаточно
+# для надёжной эвристики (NaN/целые/дробные/даты).
+TYPE_INSPECTION_SAMPLE = 100
+
 
 # --------------------------------------------------------------------------
 # Загрузка файлов
@@ -186,10 +191,13 @@ def inspect_dataset(
     """
     Возвращает список полей (с типами) для будущего датасета.
 
-    Для CSV: query игнорируется, читаем файл целиком.
+    Для CSV: query игнорируется, читаем файл целиком и определяем тип
+    через pandas.
+
     Для SQL:
       - если задан table_name → берём метаданные таблицы (быстро, без LIMIT)
-      - если задан query → выполняем его с LIMIT 0 и инспектируем колонки
+      - если задан query → выполняем его с LIMIT и определяем тип через
+        pandas-dtype на результирующем DataFrame.
     """
     if datasource.type == "csv":
         df = _read_file_to_df(
@@ -216,20 +224,17 @@ def inspect_dataset(
             ]
 
         if query:
-            # Безопаснее: выполним запрос с LIMIT 0 и возьмём описание курсора
-            wrapped = f"SELECT * FROM ({query.rstrip(';')}) AS sub LIMIT 0"
-            with engine.connect() as conn:
-                result = conn.execute(text(wrapped))
-                return [
-                    {
-                        "name": col_name,
-                        "data_type": sql_type_to_internal(
-                            result.cursor.description[i][1]
-                            if result.cursor else "TEXT"
-                        ),
-                    }
-                    for i, col_name in enumerate(result.keys())
-                ]
+            # Читаем небольшую выборку через pandas — он сам приведёт
+            # колонки к корректным dtype'ам.
+            base = query.rstrip(";").rstrip()
+            wrapped = (
+                f"SELECT * FROM ({base}) AS sub LIMIT {TYPE_INSPECTION_SAMPLE}"
+            )
+            df = pd.read_sql(text(wrapped), engine)
+            return [
+                {"name": col, "data_type": pandas_dtype_to_internal(df[col])}
+                for col in df.columns
+            ]
 
         raise ValueError("Нужно указать table_name или query")
 
@@ -244,7 +249,7 @@ def read_dataset(
 ) -> pd.DataFrame:
     """
     Читает данные датасета в pandas.DataFrame.
-    Используется для предпросмотра и (на следующем этапе) для агрегации в виджетах.
+    Используется для предпросмотра и для агрегации в виджетах.
     """
     if datasource.type == "csv":
         return _read_file_to_df(datasource.connection_string, nrows=limit)
