@@ -17,6 +17,11 @@ import { getKpiValue } from "../api/kpiApi";
  *   compact          — компактный режим
  *   onClick          — опциональный обработчик клика
  *   showRefresh      — показывать кнопку обновления (по умолчанию true)
+ *
+ * Классы kpi-tile-title и kpi-tile-body — это «крючки» для CSS, который
+ * на странице дашборда подмешивается перед экспортом в PDF. Они дают
+ * заголовку KPI гарантированный нижний паддинг и неубираемый overflow,
+ * чтобы html2canvas не обрезал нижнюю строку букв (аналогично виджетам).
  */
 export default function KpiCard({
   kpi,
@@ -52,13 +57,18 @@ export default function KpiCard({
     <Wrapper
       onClick={onClick}
       className={`
-        flex h-full w-full flex-col rounded-2xl bg-white p-4 text-left shadow-sm
+        relative flex h-full w-full flex-col rounded-2xl bg-white p-4 text-left shadow-sm
         ${isClickable ? "transition hover:shadow-md" : ""}
       `}
     >
-      <div className="mb-2 flex items-start justify-between gap-2">
-        <div className="flex-1 overflow-hidden">
-          <p className="truncate font-semibold">{kpi.name}</p>
+      <div className="kpi-tile-title mb-2 flex shrink-0 items-start justify-between gap-2 pb-1">
+        <div className="flex-1 min-w-0">
+          <p
+            className="truncate font-semibold leading-snug"
+            title={kpi.name}
+          >
+            {kpi.name}
+          </p>
           {kpi.category_name && (
             <p className="text-xs text-slate-500">{kpi.category_name}</p>
           )}
@@ -84,7 +94,7 @@ export default function KpiCard({
         </div>
       </div>
 
-      <div className="flex-1 overflow-hidden">
+      <div className="kpi-tile-body flex-1 overflow-hidden">
         {loading && !value && <p className="text-sm text-slate-400">Загрузка...</p>}
         {error && <p className="text-sm text-red-600">{error}</p>}
         {!error && value && <KpiBody data={value} compact={compact} />}

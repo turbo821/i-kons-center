@@ -77,17 +77,16 @@ const textAlignCls = (key) =>
 
 
 // CSS, временно подмешиваемый перед снимком в PDF.
-// Зачем: на дашборде заголовок виджета — это обычный <p> в DOM, который
-// располагается над SVG-чарта. В нормальном просмотре браузер сглаживает,
-// а html2canvas «склеивает» соседние элементы попиксельно — нижняя строка
-// заголовка иногда оказывается на одной линии с верхом SVG, и при rasterise
-// её обрезает. Поэтому в режиме экспорта мы:
-//   1. Принудительно даём заголовку min-height и нижний padding;
-//   2. Поднимаем z-index, чтобы он точно был "сверху";
-//   3. Сдвигаем чарт recharts вниз на пару пикселей.
-// После снятия снимка стили снимаются.
+// Покрывает заголовки и виджетов, и KPI-карточек:
+//   - принудительно даём заголовку min-height и нижний padding,
+//     чтобы строка букв не подрезалась нижней границей контейнера;
+//   - снимаем overflow:hidden c truncate-параграфа, чтобы хвост ушёл
+//     за пределы блока, а не отрезался по пикселю снизу;
+//   - сдвигаем содержимое чарта вниз на пару пикселей.
+// После снятия снимка стили удаляются.
 const PDF_EXPORT_CSS = `
-  .pdf-exporting .widget-tile-title {
+  .pdf-exporting .widget-tile-title,
+  .pdf-exporting .kpi-tile-title {
     min-height: 28px !important;
     line-height: 1.4 !important;
     padding-bottom: 6px !important;
@@ -96,18 +95,23 @@ const PDF_EXPORT_CSS = `
     z-index: 5 !important;
     overflow: visible !important;
   }
-  .pdf-exporting .widget-tile-title p {
+  .pdf-exporting .widget-tile-title p,
+  .pdf-exporting .kpi-tile-title p {
     overflow: visible !important;
     text-overflow: clip !important;
     white-space: normal !important;
     padding-bottom: 2px !important;
     line-height: 1.4 !important;
   }
-  .pdf-exporting .widget-tile-body {
+  .pdf-exporting .widget-tile-body,
+  .pdf-exporting .kpi-tile-body {
     padding-top: 4px !important;
   }
   .pdf-exporting .widget-tile-body .recharts-wrapper {
-    margin-top: 2px !important;
+    margin-bottom: 2px !important;
+  }
+  .pdf-exporting .kpi-tile-title button {
+    display: none !important;
   }
 `;
 
@@ -314,24 +318,10 @@ export default function DashboardDetailPage() {
     }
   };
 
-  // -------------------------------------------------------------------
-  // Экспорт в PDF
-  //
-  // Особенности:
-  //  - перед снимком инъекцируем стили (PDF_EXPORT_CSS), которые дают
-  //    заголовкам виджетов гарантированный отступ снизу и убирают
-  //    обрезание (overflow:hidden у truncate-параграфа);
-  //  - на контейнере временно ставим класс .pdf-exporting, чтобы
-  //    селекторы стилей сработали;
-  //  - фиксируем высоту контейнера = scrollHeight + запас, чтобы нижние
-  //    подписи не отрезались;
-  //  - после снимка возвращаем всё как было.
-  // -------------------------------------------------------------------
+  // Экспорт в PDF: см. комментарий к PDF_EXPORT_CSS.
   const handleExportPdf = async () => {
     setExportingPdf(true);
 
-    // Поднимаем <style> в head, чтобы CSS-правила применились ко всем
-    // плиткам сразу. Снимаем его сразу после снимка.
     const styleEl = document.createElement("style");
     styleEl.setAttribute("data-pdf-export", "1");
     styleEl.textContent = PDF_EXPORT_CSS;
@@ -351,17 +341,14 @@ export default function DashboardDetailPage() {
 
       const BOTTOM_PAD = 40;
 
-      // Сохраняем исходные inline-стили
       const prev = {
         height: node.style.height,
         overflow: node.style.overflow,
         paddingBottom: node.style.paddingBottom,
       };
 
-      // Включаем класс «режима экспорта» — CSS подхватится
       node.classList.add("pdf-exporting");
 
-      // Дать браузеру кадр на применение новых стилей перед измерением высоты
       await new Promise((resolve) => requestAnimationFrame(resolve));
 
       const fullHeight = node.scrollHeight + BOTTOM_PAD;
@@ -422,7 +409,6 @@ export default function DashboardDetailPage() {
       console.error(e);
       toast.error("Не удалось создать PDF");
     } finally {
-      // В любом случае снимаем стили
       if (styleEl.parentNode) styleEl.parentNode.removeChild(styleEl);
       setExportingPdf(false);
     }
@@ -646,15 +632,6 @@ export default function DashboardDetailPage() {
 }
 
 
-// WidgetTile.
-// Структура важна для корректного снимка в PDF:
-//  - корневой div — relative + не используем overflow:hidden,
-//    чтобы заголовок не «обрезался» по пиксельной границе при rasterise;
-//  - заголовок (.widget-tile-title) — shrink-0 + min-h, с явным
-//    padding-bottom — это гарантирует, что под буквами всегда есть
-//    несколько пикселей запаса, которые html2canvas не отрежет;
-//  - область чарта (.widget-tile-body) — flex-1 min-h-0, тоже без
-//    overflow:hidden (recharts сам ограничит SVG своим contentBox).
 function WidgetTile({ item, editMode, canEdit, onRemove }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
