@@ -244,7 +244,7 @@ def update_dataset(ds_id):
             return jsonify({"message": "Имя не может быть пустым"}), 400
         dataset.name = data["name"]
 
-    if "query" in data and dataset.datasource.type != "csv":
+    if "query" in data and dataset.datasource.type not in ("csv", "csv_link"):
         if not data["query"]:
             return jsonify({"message": "query не может быть пустым"}), 400
         dataset.sql_query = data["query"]

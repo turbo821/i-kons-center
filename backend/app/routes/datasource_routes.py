@@ -3,12 +3,17 @@ REST API для работы с источниками данных.
 
 Маршруты:
     GET    /api/datasources              — список
-    POST   /api/datasources               — создать (JSON, для SQL-источников)
+    POST   /api/datasources               — создать (JSON, SQL-источник)
     POST   /api/datasources/upload        — загрузить CSV/Excel
+    POST   /api/datasources/link          — создать «ссылку» на файл по пути
     GET    /api/datasources/<id>          — получить один
+    PUT    /api/datasources/<id>          — обновить метаданные
     DELETE /api/datasources/<id>          — удалить
     POST   /api/datasources/<id>/test     — проверка подключения
     GET    /api/datasources/<id>/tables   — список таблиц источника
+    POST   /api/datasources/<id>/replace-file  — заменить файл (только csv)
+    PUT    /api/datasources/<id>/connection    — обновить SQL-соединение
+    PUT    /api/datasources/<id>/link-path     — обновить путь к файлу (csv_link)
 """
 
 import json
@@ -27,18 +32,12 @@ datasource_bp = Blueprint(
     url_prefix="/api/datasources"
 )
 
-# Кто может управлять источниками — admin и expert.
-# Для краткости вынесем в одно место:
 EDITOR_ROLES = ("admin", "expert")
 
 
-# ---------------------------------------------------------------------------
-# LIST
-# ---------------------------------------------------------------------------
 @datasource_bp.route("", methods=["GET"])
 @jwt_required()
 def list_datasources():
-    """Просматривать список источников могут все авторизованные."""
     q = DataSource.query
     category_id = request.args.get("category_id", type=int)
     if category_id is not None:
@@ -47,24 +46,9 @@ def list_datasources():
     return jsonify([d.to_dict() for d in items])
 
 
-# ---------------------------------------------------------------------------
-# CREATE — SQL-источник (postgres/mysql)
-# ---------------------------------------------------------------------------
 @datasource_bp.route("", methods=["POST"])
 @role_required(*EDITOR_ROLES)
 def create_sql_datasource():
-    """
-    Body:
-    {
-      "name": "Производственная БД",
-      "type": "postgres" | "mysql",
-      "host": "10.0.0.5",
-      "port": 5432,
-      "database": "prod",
-      "user": "reader",
-      "password": "..."
-    }
-    """
     data = request.json or {}
 
     required = ("name", "type", "host", "port", "database", "user", "password")
@@ -103,7 +87,6 @@ def create_sql_datasource():
         created_by=user_id,
     )
 
-    # Проверим подключение перед сохранением — пустые источники не нужны
     ok, msg = ds_service.test_connection(ds)
     if not ok:
         return jsonify({
@@ -116,17 +99,10 @@ def create_sql_datasource():
     return jsonify(ds.to_dict()), 201
 
 
-# ---------------------------------------------------------------------------
-# CREATE — загрузка файла CSV/Excel
-# ---------------------------------------------------------------------------
 @datasource_bp.route("/upload", methods=["POST"])
 @role_required(*EDITOR_ROLES)
 def upload_file_datasource():
-    """
-    multipart/form-data:
-      file: <file>
-      name: <строка> (опционально, по умолчанию = имя файла)
-    """
+    """multipart/form-data: file, name?, category_id?"""
     if "file" not in request.files:
         return jsonify({"message": "Файл не передан (поле 'file')"}), 400
 
@@ -161,7 +137,6 @@ def upload_file_datasource():
         created_by=user_id,
     )
 
-    # Проверка валидности файла (можно ли его распарсить)
     ok, msg = ds_service.test_connection(ds)
     if not ok:
         ds_service.remove_file_if_exists(saved_path)
@@ -176,8 +151,62 @@ def upload_file_datasource():
 
 
 # ---------------------------------------------------------------------------
-# GET ONE
+# CSV/Excel ПО ССЫЛКЕ (без копирования файла)
 # ---------------------------------------------------------------------------
+@datasource_bp.route("/link", methods=["POST"])
+@role_required(*EDITOR_ROLES)
+def create_link_datasource():
+    """
+    Создаёт источник типа csv_link: connection_string хранит абсолютный
+    путь к существующему файлу на сервере. Файл не копируется в uploads/.
+
+    Body:
+    {
+      "name": "Продажи Q1",
+      "path": "C:/data/sales.csv",   # или /opt/data/sales.xlsx
+      "category_id": 1
+    }
+
+    Изменения в файле автоматически подхватываются — при каждом чтении
+    мы открываем файл заново. Если файл будет удалён или перемещён,
+    источник перестанет работать (вернёт «Файл не найден»).
+    """
+    data = request.json or {}
+
+    name = (data.get("name") or "").strip()
+    path = (data.get("path") or "").strip()
+
+    if not name:
+        return jsonify({"message": "Укажите название источника"}), 400
+    if not path:
+        return jsonify({"message": "Укажите путь к файлу"}), 400
+
+    # Валидируем путь: существует, читается, расширение допустимо
+    ok, msg = ds_service.validate_external_file_path(path)
+    if not ok:
+        return jsonify({"message": msg}), 400
+
+    category_id = data.get("category_id")
+    if category_id and not db.session.get(DataSourceCategory, category_id):
+        return jsonify({
+            "message": f"Категория id={category_id} не найдена"
+        }), 400
+
+    user_id = int(get_jwt_identity())
+
+    ds = DataSource(
+        name=name,
+        type="csv_link",
+        connection_string=path,
+        category_id=category_id,
+        created_by=user_id,
+    )
+    db.session.add(ds)
+    db.session.commit()
+
+    return jsonify(ds.to_dict()), 201
+
+
 @datasource_bp.route("/<int:ds_id>", methods=["GET"])
 @jwt_required()
 def get_datasource(ds_id):
@@ -185,21 +214,18 @@ def get_datasource(ds_id):
     return jsonify(ds.to_dict())
 
 
-# ---------------------------------------------------------------------------
-# DELETE
-# ---------------------------------------------------------------------------
 @datasource_bp.route("/<int:ds_id>", methods=["DELETE"])
 @role_required(*EDITOR_ROLES)
 def delete_datasource(ds_id):
     ds = DataSource.query.get_or_404(ds_id)
 
-    # Если есть привязанные датасеты — запрещаем удаление,
-    # иначе оборвём всю цепочку виджетов.
     if ds.datasets:
         return jsonify({
             "message": "Нельзя удалить источник: есть связанные наборы данных"
         }), 409
 
+    # Физически удаляем только файлы, загруженные через /upload.
+    # Для csv_link файл принадлежит пользователю — удалять его нельзя.
     if ds.type == "csv":
         ds_service.remove_file_if_exists(ds.connection_string)
 
@@ -208,10 +234,11 @@ def delete_datasource(ds_id):
 
     return jsonify({"message": "Удалено"})
 
+
 @datasource_bp.route("/<int:ds_id>", methods=["PUT"])
 @role_required(*EDITOR_ROLES)
 def update_datasource(ds_id):
-    """Обновление метаданных источника (имя, категория)."""
+    """Обновление метаданных (имя, категория)."""
     ds = DataSource.query.get_or_404(ds_id)
     data = request.json or {}
 
@@ -231,17 +258,19 @@ def update_datasource(ds_id):
     db.session.commit()
     return jsonify(ds.to_dict())
 
-# ---------------------------------------------------------------------------
-# REPLACE FILE — замена файла CSV/Excel
-# ---------------------------------------------------------------------------
+
 @datasource_bp.route("/<int:ds_id>/replace-file", methods=["POST"])
 @role_required(*EDITOR_ROLES)
 def replace_file(ds_id):
+    """Замена файла. Только для type='csv'. Для csv_link используйте link-path."""
     ds = DataSource.query.get_or_404(ds_id)
 
     if ds.type != "csv":
         return jsonify({
-            "message": "Замена файла доступна только для CSV/Excel-источников"
+            "message": (
+                "Замена файла доступна только для источников типа 'csv'. "
+                "Для csv_link используйте обновление пути."
+            )
         }), 400
 
     if "file" not in request.files:
@@ -256,23 +285,19 @@ def replace_file(ds_id):
             "message": "Поддерживаются только файлы CSV, XLS, XLSX"
         }), 400
 
-    # Собираем существующие имена полей всех датасетов
     required_fields_by_ds = {
         d.id: {f.name for f in d.fields} for d in ds.datasets
     }
 
-    # Сохраняем новый файл во временное место
     try:
         new_path = ds_service.save_uploaded_file(file)
     except (OSError, ValueError) as e:
         return jsonify({"message": f"Ошибка сохранения: {e}"}), 400
 
-    # Проверяем, что новый файл читается и содержит все необходимые столбцы
     old_path = ds.connection_string
     ds.connection_string = new_path
 
     try:
-        # Для каждого датасета пытаемся получить актуальную структуру
         import pandas as pd
         new_df = (
             pd.read_csv(new_path) if new_path.lower().endswith(".csv")
@@ -281,11 +306,11 @@ def replace_file(ds_id):
         new_columns = set(new_df.columns)
 
         problems = []
-        for ds_id, required in required_fields_by_ds.items():
+        for d_id, required in required_fields_by_ds.items():
             missing = required - new_columns
             if missing:
                 problems.append(
-                    f"набор данных id={ds_id} требует столбцы: "
+                    f"набор данных id={d_id} требует столбцы: "
                     f"{', '.join(missing)}"
                 )
 
@@ -301,7 +326,6 @@ def replace_file(ds_id):
         ds_service.remove_file_if_exists(new_path)
         return jsonify({"message": f"Не удалось прочитать файл: {e}"}), 400
 
-    # Всё хорошо — удаляем старый файл
     ds_service.remove_file_if_exists(old_path)
     db.session.commit()
 
@@ -309,8 +333,72 @@ def replace_file(ds_id):
 
 
 # ---------------------------------------------------------------------------
-# UPDATE CONNECTION — обновление SQL-соединения
+# Обновление пути для csv_link
 # ---------------------------------------------------------------------------
+@datasource_bp.route("/<int:ds_id>/link-path", methods=["PUT"])
+@role_required(*EDITOR_ROLES)
+def update_link_path(ds_id):
+    """
+    Обновляет путь к файлу для источника типа csv_link.
+    Body: {"path": "/new/path/to/file.csv"}
+
+    Проверяем, что новый файл существует, читается и содержит все
+    столбцы, которые требуются существующими датасетами (аналогично
+    replace-file для csv).
+    """
+    ds = DataSource.query.get_or_404(ds_id)
+
+    if ds.type != "csv_link":
+        return jsonify({
+            "message": (
+                "Обновление пути доступно только для источников типа "
+                "'csv_link'."
+            )
+        }), 400
+
+    data = request.json or {}
+    new_path = (data.get("path") or "").strip()
+
+    ok, msg = ds_service.validate_external_file_path(new_path)
+    if not ok:
+        return jsonify({"message": msg}), 400
+
+    # Проверяем совместимость с существующими датасетами по столбцам
+    required_fields_by_ds = {
+        d.id: {f.name for f in d.fields} for d in ds.datasets
+    }
+    old_path = ds.connection_string
+    ds.connection_string = new_path
+
+    try:
+        import pandas as pd
+        new_df = (
+            pd.read_csv(new_path) if new_path.lower().endswith(".csv")
+            else pd.read_excel(new_path)
+        )
+        new_columns = set(new_df.columns)
+
+        problems = []
+        for d_id, required in required_fields_by_ds.items():
+            missing = required - new_columns
+            if missing:
+                problems.append(
+                    f"набор данных id={d_id} требует столбцы: "
+                    f"{', '.join(missing)}"
+                )
+        if problems:
+            ds.connection_string = old_path
+            return jsonify({
+                "message": "Файл несовместим:\n" + "\n".join(problems)
+            }), 400
+    except (ValueError, OSError, ImportError) as e:
+        ds.connection_string = old_path
+        return jsonify({"message": f"Не удалось прочитать файл: {e}"}), 400
+
+    db.session.commit()
+    return jsonify({"message": "Путь обновлён", "datasource": ds.to_dict()})
+
+
 @datasource_bp.route("/<int:ds_id>/connection", methods=["PUT"])
 @role_required(*EDITOR_ROLES)
 def update_connection(ds_id):
@@ -337,11 +425,9 @@ def update_connection(ds_id):
         "password": data["password"],
     }
 
-    # Сохраняем старое значение, чтобы откатить при ошибке
     old_connection = ds.connection_string
     ds.connection_string = json.dumps(new_connection)
 
-    # Проверка подключения
     ok, msg = ds_service.test_connection(ds)
     if not ok:
         ds.connection_string = old_connection
@@ -349,7 +435,6 @@ def update_connection(ds_id):
             "message": f"Не удалось подключиться: {msg}"
         }), 400
 
-    # Проверка доступности таблиц существующих датасетов
     try:
         for d in ds.datasets:
             ds_service.read_dataset(d.datasource, query=d.sql_query, limit=1)
@@ -368,9 +453,7 @@ def update_connection(ds_id):
         "datasource": ds.to_dict()
     })
 
-# ---------------------------------------------------------------------------
-# TEST CONNECTION
-# ---------------------------------------------------------------------------
+
 @datasource_bp.route("/<int:ds_id>/test", methods=["POST"])
 @jwt_required()
 def test_connection(ds_id):
@@ -379,9 +462,6 @@ def test_connection(ds_id):
     return jsonify({"ok": ok, "message": msg})
 
 
-# ---------------------------------------------------------------------------
-# LIST TABLES (для конструктора датасетов)
-# ---------------------------------------------------------------------------
 @datasource_bp.route("/<int:ds_id>/tables", methods=["GET"])
 @jwt_required()
 def list_tables(ds_id):

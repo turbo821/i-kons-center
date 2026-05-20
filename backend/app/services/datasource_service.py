@@ -1,8 +1,18 @@
 """
 Сервис для работы с источниками данных.
 
-Абстрагирует три типа подключений (csv, postgres, mysql) под единый интерфейс:
-    - test_connection(datasource)          → bool
+Поддерживаемые типы (DataSource.type):
+    - "csv"      — загруженный CSV/Excel-файл (хранится в uploads/)
+    - "csv_link" — CSV/Excel-файл «по ссылке»: connection_string хранит путь
+                   к существующему файлу на сервере; файл не копируется и
+                   не удаляется системой. При каждом чтении данные берутся
+                   свежими (полезно, если файл регулярно обновляется
+                   внешним процессом).
+    - "postgres" — внешняя БД PostgreSQL
+    - "mysql"    — внешняя БД MySQL
+
+Публичный API:
+    - test_connection(datasource)          → (ok, message)
     - list_tables(datasource)              → list[str]
     - read_dataset(datasource, query)      → pandas.DataFrame
     - inspect_dataset(datasource, query)   → list[{name, data_type}]
@@ -25,32 +35,32 @@ from app.services.type_mapping import (
     sql_type_to_internal,
 )
 
-# Лимит строк для пробного чтения и предпросмотра
-PREVIEW_ROW_LIMIT = 1000
 
-# Сколько строк читать для определения типа поля в результирующем запросе.
-# Маленькое число держит inspect_dataset быстрым, но 100 строк уже достаточно
-# для надёжной эвристики (NaN/целые/дробные/даты).
+PREVIEW_ROW_LIMIT = 1000
 TYPE_INSPECTION_SAMPLE = 100
+
+# Множество типов источников, использующих файловое чтение через pandas.
+# Используется во многих местах — выделили константу, чтобы не плодить
+# дубли "if t == csv or t == csv_link".
+FILE_TYPES = ("csv", "csv_link")
 
 
 # --------------------------------------------------------------------------
-# Загрузка файлов
+# Файлы
 # --------------------------------------------------------------------------
 
 def is_allowed_file(filename: str) -> bool:
     """Проверка расширения по белому списку из конфига."""
     if "." not in filename:
         return False
-
     ext = filename.rsplit(".", 1)[1].lower()
     return ext in current_app.config["ALLOWED_FILE_EXTENSIONS"]
 
 
 def save_uploaded_file(file: FileStorage) -> str:
     """
-    Сохраняет файл на диск с уникальным именем (избегаем коллизий).
-    Возвращает абсолютный путь, который попадёт в DataSource.connection_string.
+    Сохраняет загруженный файл на диск с уникальным именем.
+    Возвращает абсолютный путь — он попадёт в DataSource.connection_string.
     """
     upload_dir = current_app.config["UPLOAD_FOLDER"]
     os.makedirs(upload_dir, exist_ok=True)
@@ -59,7 +69,6 @@ def save_uploaded_file(file: FileStorage) -> str:
     if not original_name:
         raise ValueError("Имя файла недопустимо")
 
-    # Уникализация: <uuid>__<original_name>
     unique_name = f"{uuid.uuid4().hex}__{original_name}"
     full_path = os.path.join(upload_dir, unique_name)
 
@@ -68,17 +77,44 @@ def save_uploaded_file(file: FileStorage) -> str:
 
 
 def remove_file_if_exists(path: str) -> None:
-    """Безопасно удаляет файл (используется при удалении DataSource)."""
+    """Безопасно удаляет файл (используется только для type='csv')."""
     if path and os.path.isfile(path):
         try:
             os.remove(path)
         except OSError:
-            # Не критично: запись в БД важнее физического файла
             pass
 
 
+def validate_external_file_path(path: str) -> tuple[bool, str]:
+    """
+    Проверяет, что указанный путь существует, является файлом, имеет
+    разрешённое расширение и может быть прочитан pandas.
+
+    Используется для type='csv_link', где пользователь сам вводит путь.
+    Возвращает (ok, message).
+    """
+    if not path:
+        return False, "Путь не указан"
+
+    if not os.path.isabs(path):
+        return False, "Укажите абсолютный путь к файлу"
+
+    if not os.path.isfile(path):
+        return False, f"Файл не найден: {path}"
+
+    if not is_allowed_file(path):
+        return False, "Поддерживаются только файлы CSV, XLS, XLSX"
+
+    try:
+        _read_file_to_df(path, nrows=1)
+    except (ValueError, OSError, pd.errors.ParserError) as e:
+        return False, f"Файл невозможно прочитать: {e}"
+
+    return True, "OK"
+
+
 # --------------------------------------------------------------------------
-# Чтение CSV/Excel в DataFrame
+# Чтение CSV/Excel
 # --------------------------------------------------------------------------
 
 def _read_file_to_df(
@@ -89,7 +125,6 @@ def _read_file_to_df(
     ext = file_path.rsplit(".", 1)[1].lower()
 
     if ext == "csv":
-        # Пробуем utf-8, при ошибке — cp1251 (распространено в РФ-выгрузках)
         try:
             return pd.read_csv(file_path, nrows=nrows)
         except UnicodeDecodeError:
@@ -108,7 +143,7 @@ def _read_file_to_df(
 def _build_sql_engine(datasource):
     """
     Создаёт SQLAlchemy engine для внешней БД.
-    connection_string хранит JSON: {host, port, database, user, password}
+    connection_string хранит JSON: {host, port, database, user, password}.
     """
     try:
         params = json.loads(datasource.connection_string)
@@ -129,22 +164,19 @@ def _build_sql_engine(datasource):
         f"{driver}://{params['user']}:{params['password']}"
         f"@{params['host']}:{params['port']}/{params['database']}"
     )
-
-    # pool_pre_ping — проверка живого соединения перед запросом
     return create_engine(uri, pool_pre_ping=True)
 
 
 # --------------------------------------------------------------------------
-# Публичный API сервиса
+# Публичный API
 # --------------------------------------------------------------------------
 
 def test_connection(datasource) -> tuple[bool, str]:
     """Проверка работоспособности подключения. Возвращает (успех, сообщение)."""
     try:
-        if datasource.type == "csv":
+        if datasource.type in FILE_TYPES:
             if not os.path.isfile(datasource.connection_string):
-                return False, "Файл не найден на сервере"
-            # Прочитать одну строку — убедиться, что файл валидный
+                return False, "Файл не найден"
             _read_file_to_df(datasource.connection_string, nrows=1)
             return True, "OK"
 
@@ -165,12 +197,12 @@ def test_connection(datasource) -> tuple[bool, str]:
 def list_tables(datasource) -> list[str]:
     """
     Возвращает список «таблиц» источника:
-      - для csv: одна виртуальная «таблица» с именем файла
-      - для SQL: реальные таблицы и представления через INSPECT
+      - для csv / csv_link: одна виртуальная «таблица» с именем файла;
+      - для SQL: реальные таблицы и представления через INSPECT.
     """
-    if datasource.type == "csv":
+    if datasource.type in FILE_TYPES:
         base = os.path.basename(datasource.connection_string)
-        # Убираем uuid-префикс для отображения
+        # Для uploaded-файлов убираем uuid-префикс «hash__»
         display_name = base.split("__", 1)[-1] if "__" in base else base
         return [display_name]
 
@@ -191,15 +223,10 @@ def inspect_dataset(
     """
     Возвращает список полей (с типами) для будущего датасета.
 
-    Для CSV: query игнорируется, читаем файл целиком и определяем тип
-    через pandas.
-
-    Для SQL:
-      - если задан table_name → берём метаданные таблицы (быстро, без LIMIT)
-      - если задан query → выполняем его с LIMIT и определяем тип через
-        pandas-dtype на результирующем DataFrame.
+    Для CSV-подобных: query игнорируется, тип определяем через pandas.
+    Для SQL: смотри комментарий внутри ветки.
     """
-    if datasource.type == "csv":
+    if datasource.type in FILE_TYPES:
         df = _read_file_to_df(
             datasource.connection_string,
             nrows=PREVIEW_ROW_LIMIT
@@ -224,8 +251,10 @@ def inspect_dataset(
             ]
 
         if query:
-            # Читаем небольшую выборку через pandas — он сам приведёт
-            # колонки к корректным dtype'ам.
+            # Читаем выборку через pandas — он корректно определит dtype'ы
+            # по фактическим значениям. cursor.description нельзя
+            # использовать для агрегаций — он возвращает type_code как
+            # число, и приведение к строке даёт мусор.
             base = query.rstrip(";").rstrip()
             wrapped = (
                 f"SELECT * FROM ({base}) AS sub LIMIT {TYPE_INSPECTION_SAMPLE}"
@@ -249,9 +278,11 @@ def read_dataset(
 ) -> pd.DataFrame:
     """
     Читает данные датасета в pandas.DataFrame.
-    Используется для предпросмотра и для агрегации в виджетах.
+
+    Для csv_link: при каждом вызове читаем файл свежим, что и обеспечивает
+    «живое» обновление данных при внешних правках файла.
     """
-    if datasource.type == "csv":
+    if datasource.type in FILE_TYPES:
         return _read_file_to_df(datasource.connection_string, nrows=limit)
 
     if datasource.type in ("postgres", "mysql"):

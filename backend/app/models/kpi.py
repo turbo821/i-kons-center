@@ -40,21 +40,28 @@ class KPI(db.Model):
     category = db.relationship("KPICategory", back_populates="kpis")
     metric = db.relationship("Metric")
 
+    # Связь «многие-ко-многим» с дашбордами через ассоциативную таблицу.
+    # overlaps указывает SQLAlchemy, что эти три связи (dashboards,
+    # dashboard_links и DashboardKPI.kpi / .dashboard) разделяют одни и те
+    # же столбцы FK — это не баг, это умышленный паттерн association object.
     dashboards = db.relationship(
         "Dashboard",
         secondary="dashboard_kpis",
-        back_populates="kpis"
+        back_populates="kpis",
+        viewonly=True,
+        overlaps="dashboard_links,dashboard_kpis,kpi,dashboard",
     )
 
-    # Размещения KPI на дашбордах (с координатами)
+    # Размещения KPI на дашбордах (с координатами).
+    # Это «настоящая» связь — через неё ведутся записи.
     dashboard_links = db.relationship(
         "DashboardKPI",
         back_populates="kpi",
-        cascade="all, delete-orphan"
+        cascade="all, delete-orphan",
+        overlaps="dashboards",
     )
 
     def to_dict(self, include_metric=False):
-        # Информация о метрике с указанием источника и датасета
         metric_info = None
         if self.metric is not None:
             field = self.metric.field

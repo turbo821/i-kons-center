@@ -10,12 +10,14 @@ import {
   XCircle,
   RefreshCw,
   FolderTree,
+  Link2,
 } from "lucide-react";
 
 import {
   listDataSources,
   createSqlDataSource,
   uploadFileDataSource,
+  createCsvLinkDataSource,
   deleteDataSource,
   testDataSource,
 } from "../api/datasourceApi";
@@ -35,12 +37,14 @@ import ListToolbar, {
 
 const TYPE_ICON = {
   csv: FileSpreadsheet,
+  csv_link: Link2,
   postgres: Database,
   mysql: Database,
 };
 
 const TYPE_LABEL = {
-  csv: "CSV / Excel",
+  csv: "CSV / Excel (загружен)",
+  csv_link: "CSV / Excel (по ссылке)",
   postgres: "PostgreSQL",
   mysql: "MySQL",
 };
@@ -365,61 +369,134 @@ export default function DataSourcesPage() {
 
 function UploadFileModal({ open, onClose, categories, onCreated }) {
   const toast = useToast();
+  // Режим: 'upload' — загрузить файл (старый поведение); 'link' — путь к файлу
+  const [mode, setMode] = useState("upload");
   const [file, setFile] = useState(null);
+  const [path, setPath] = useState("");
   const [name, setName] = useState("");
   const [categoryId, setCategoryId] = useState("");
   const [busy, setBusy] = useState(false);
 
+  const reset = () => {
+    setMode("upload");
+    setFile(null);
+    setPath("");
+    setName("");
+    setCategoryId("");
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!file) return;
-
     setBusy(true);
     try {
-      await uploadFileDataSource(
-        file,
-        name,
-        categoryId ? Number(categoryId) : undefined
-      );
-      toast.success("Файл загружен");
-      setFile(null);
-      setName("");
-      setCategoryId("");
+      if (mode === "upload") {
+        if (!file) return;
+        await uploadFileDataSource(
+          file,
+          name,
+          categoryId ? Number(categoryId) : undefined
+        );
+        toast.success("Файл загружен");
+      } else {
+        if (!path.trim() || !name.trim()) return;
+        await createCsvLinkDataSource({
+          name: name.trim(),
+          path: path.trim(),
+          category_id: categoryId ? Number(categoryId) : null,
+        });
+        toast.success("Источник создан (по ссылке)");
+      }
+      reset();
       onClose();
       onCreated();
-    } catch (e) {
-      toast.error(e?.response?.data?.message || "Ошибка загрузки");
+    } catch (err) {
+      toast.error(err?.response?.data?.message || "Ошибка");
     } finally {
       setBusy(false);
     }
   };
 
   return (
-    <Modal open={open} onClose={onClose} title="Загрузить файл">
+    <Modal open={open} onClose={onClose} title="Добавить CSV/Excel-источник">
       <form onSubmit={handleSubmit} className="space-y-4">
-        <div>
-          <label className="mb-1 block text-sm font-medium">
-            Файл (CSV, XLS, XLSX)
-          </label>
-          <input
-            type="file"
-            accept=".csv,.xls,.xlsx"
-            onChange={(e) => setFile(e.target.files?.[0] || null)}
-            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-            required
-          />
+        {/* Переключатель режима */}
+        <div className="flex gap-2 rounded-lg bg-slate-100 p-1">
+          <button
+            type="button"
+            onClick={() => setMode("upload")}
+            className={`flex-1 rounded-md px-3 py-1.5 text-sm font-medium ${
+              mode === "upload"
+                ? "bg-white text-slate-900 shadow-sm"
+                : "text-slate-600 hover:text-slate-900"
+            }`}
+          >
+            Загрузить файл
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode("link")}
+            className={`flex-1 rounded-md px-3 py-1.5 text-sm font-medium ${
+              mode === "link"
+                ? "bg-white text-slate-900 shadow-sm"
+                : "text-slate-600 hover:text-slate-900"
+            }`}
+          >
+            Указать путь
+          </button>
         </div>
+
+        {mode === "upload" ? (
+          <div>
+            <label className="mb-1 block text-sm font-medium">
+              Файл (CSV, XLS, XLSX)
+            </label>
+            <input
+              type="file"
+              accept=".csv,.xls,.xlsx"
+              onChange={(e) => setFile(e.target.files?.[0] || null)}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              required
+            />
+            <p className="mt-1 text-xs text-slate-500">
+              Файл будет скопирован на сервер. Изменения в исходном файле
+              не повлияют на источник.
+            </p>
+          </div>
+        ) : (
+          <div>
+            <label className="mb-1 block text-sm font-medium">
+              Путь к файлу на сервере
+            </label>
+            <input
+              type="text"
+              value={path}
+              onChange={(e) => setPath(e.target.value)}
+              placeholder="C:/data/sales.csv или /opt/data/sales.xlsx"
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-mono"
+              required
+            />
+            <p className="mt-1 text-xs text-slate-500">
+              Абсолютный путь к существующему файлу. Файл не копируется —
+              изменения в нём будут автоматически видны в системе.
+            </p>
+          </div>
+        )}
 
         <div>
           <label className="mb-1 block text-sm font-medium">
-            Название (опционально)
+            Название {mode === "upload" && "(опционально)"}
           </label>
           <input
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="По умолчанию — имя файла"
+            placeholder={
+              mode === "upload"
+                ? "По умолчанию — имя файла"
+                : "Название источника"
+            }
             className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+            required={mode === "link"}
           />
         </div>
 
@@ -449,10 +526,14 @@ function UploadFileModal({ open, onClose, categories, onCreated }) {
           </button>
           <button
             type="submit"
-            disabled={busy || !file}
+            disabled={
+              busy ||
+              (mode === "upload" && !file) ||
+              (mode === "link" && (!path.trim() || !name.trim()))
+            }
             className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
           >
-            {busy ? "Загрузка..." : "Загрузить"}
+            {busy ? "..." : mode === "upload" ? "Загрузить" : "Создать"}
           </button>
         </div>
       </form>

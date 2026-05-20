@@ -19,6 +19,7 @@ import {
   updateDataSource,
   replaceDataSourceFile,
   updateDataSourceConnection,
+  updateDataSourceLinkPath,
 } from "../api/datasourceApi";
 import {
   listDatasets,
@@ -69,6 +70,7 @@ export default function DataSourceDetailPage() {
   const [editDsMetaOpen, setEditDsMetaOpen] = useState(false);
   const [editDatasetOpen, setEditDatasetOpen] = useState(null);
   const [replaceFileOpen, setReplaceFileOpen] = useState(false);
+  const [updatePathOpen, setUpdatePathOpen] = useState(false);
   const [updateConnOpen, setUpdateConnOpen] = useState(false);
   const [previewState, setPreviewState] = useState(null);
 
@@ -144,7 +146,7 @@ export default function DataSourceDetailPage() {
   if (loading) return <p className="text-slate-500">Загрузка...</p>;
   if (!datasource) return <p className="text-red-600">Не найдено</p>;
 
-  const isCsv = datasource.type === "csv";
+  const isFileSource = ["csv", "csv_link"].includes(datasource.type);
 
   return (
     <div className="space-y-6">
@@ -182,7 +184,7 @@ export default function DataSourceDetailPage() {
 
           {canEdit && (
             <div className="flex gap-2">
-              {isCsv ? (
+              {datasource.type === "csv" && (
                 <button
                   onClick={() => setReplaceFileOpen(true)}
                   className="flex items-center gap-2 rounded-xl bg-slate-100 px-4 py-2 text-sm font-medium hover:bg-slate-200"
@@ -190,7 +192,17 @@ export default function DataSourceDetailPage() {
                   <Upload size={16} />
                   Заменить файл
                 </button>
-              ) : (
+              )}
+              {datasource.type === "csv_link" && (
+                <button
+                  onClick={() => setUpdatePathOpen(true)}
+                  className="flex items-center gap-2 rounded-xl bg-slate-100 px-4 py-2 text-sm font-medium hover:bg-slate-200"
+                >
+                  <Link2 size={16} />
+                  Изменить путь
+                </button>
+              )}
+              {(datasource.type === "postgres" || datasource.type === "mysql") && (
                 <button
                   onClick={() => setUpdateConnOpen(true)}
                   className="flex items-center gap-2 rounded-xl bg-slate-100 px-4 py-2 text-sm font-medium hover:bg-slate-200"
@@ -293,6 +305,13 @@ export default function DataSourceDetailPage() {
         onUpdated={load}
       />
 
+      <UpdateLinkPathModal
+        open={updatePathOpen}
+        onClose={() => setUpdatePathOpen(false)}
+        datasource={datasource}
+        onUpdated={load}
+      />
+
       <PreviewModal
         state={previewState}
         onClose={() => setPreviewState(null)}
@@ -391,7 +410,7 @@ function DatasetRow({ ds, canEdit, onPreview, onRefresh, onDelete, onEdit }) {
 // ----- Создание датасета -----
 function CreateDatasetModal({ open, onClose, datasource, onCreated }) {
   const toast = useToast();
-  const isCsv = datasource.type === "csv";
+  const isFileSource = ["csv", "csv_link"].includes(datasource.type);
 
   const [form, setForm] = useState({ name: "", table_name: "", query: "" });
   const [tables, setTables] = useState([]);
@@ -402,12 +421,12 @@ function CreateDatasetModal({ open, onClose, datasource, onCreated }) {
     if (!open) return;
     setForm({ name: "", table_name: "", query: "" });
 
-    if (!isCsv) {
+    if (!isFileSource) {
       listDataSourceTables(datasource.id)
         .then(({ data }) => setTables(data))
         .catch(() => setTables([]));
     }
-  }, [open, datasource.id, isCsv]);
+  }, [open, datasource.id, isFileSource]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -418,7 +437,7 @@ function CreateDatasetModal({ open, onClose, datasource, onCreated }) {
       name: form.name,
     };
 
-    if (!isCsv) {
+    if (!isFileSource) {
       if (mode === "table") payload.table_name = form.table_name;
       else payload.query = form.query;
     }
@@ -449,7 +468,7 @@ function CreateDatasetModal({ open, onClose, datasource, onCreated }) {
           />
         </div>
 
-        {isCsv ? (
+        {isFileSource ? (
           <p className="rounded-lg bg-slate-50 p-3 text-sm text-slate-700">
             Для файлового источника поля будут определены автоматически
             из всего содержимого файла.
@@ -631,14 +650,14 @@ function EditDatasetModal({ dataset, datasource, onClose, onUpdated }) {
   const toast = useToast();
   const [form, setForm] = useState({ name: dataset.name, query: dataset.sql_query || "" });
   const [busy, setBusy] = useState(false);
-  const isCsv = datasource.type === "csv";
+  const isFileSource = ["csv", "csv_link"].includes(datasource.type);
 
   const submit = async (e) => {
     e.preventDefault();
     setBusy(true);
     try {
       const payload = { name: form.name };
-      if (!isCsv) payload.query = form.query;
+      if (!isFileSource) payload.query = form.query;
       await updateDataset(dataset.id, payload);
       toast.success("Набор данных обновлён");
       onClose();
@@ -664,7 +683,7 @@ function EditDatasetModal({ dataset, datasource, onClose, onUpdated }) {
           />
         </div>
 
-        {!isCsv && (
+        {!isFileSource && (
           <div>
             <label className="mb-1 block text-sm font-medium">
               SQL-запрос или имя таблицы
@@ -773,6 +792,74 @@ function ReplaceFileModal({ open, onClose, datasourceId, onReplaced }) {
   );
 }
 
+function UpdateLinkPathModal({ open, onClose, datasource, onUpdated }) {
+  const toast = useToast();
+  const [path, setPath] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  // При открытии заполняем поле текущим путём — чтобы пользователь видел,
+  // что именно меняет.
+  useEffect(() => {
+    if (open && datasource) setPath(datasource.connection_string || "");
+  }, [open, datasource]);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!path.trim()) return;
+    setBusy(true);
+    try {
+      await updateDataSourceLinkPath(datasource.id, path.trim());
+      toast.success("Путь обновлён");
+      onClose();
+      onUpdated();
+    } catch (err) {
+      toast.error(err?.response?.data?.message || "Ошибка");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal open={open} onClose={onClose} title="Изменить путь к файлу">
+      <form onSubmit={submit} className="space-y-4">
+        <div>
+          <label className="mb-1 block text-sm font-medium">
+            Абсолютный путь к файлу
+          </label>
+          <input
+            type="text"
+            value={path}
+            onChange={(e) => setPath(e.target.value)}
+            placeholder="C:/data/sales.csv или /opt/data/sales.xlsx"
+            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-mono"
+            required
+          />
+          <p className="mt-1 text-xs text-slate-500">
+            Если в новом файле отсутствуют столбцы, нужные существующим
+            наборам данных, обновление будет отклонено.
+          </p>
+        </div>
+
+        <div className="flex justify-end gap-2 pt-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg px-4 py-2 text-sm hover:bg-slate-100"
+          >
+            Отмена
+          </button>
+          <button
+            type="submit"
+            disabled={busy || !path.trim()}
+            className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
+          >
+            {busy ? "..." : "Сохранить"}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
 
 // ----- Обновление SQL-соединения -----
 function UpdateConnectionModal({ open, onClose, datasource, onUpdated }) {

@@ -14,23 +14,20 @@ import {
   ResponsiveContainer,
 } from "recharts";
 
-// Палитра для столбчатой и линейной диаграммы.
-// Холодные, насыщенные цвета — хорошо различимы рядом на одной оси.
+// Палитра для столбчатой (включая горизонтальную) и линейной диаграммы.
+// Каждый цвет соответствует одной метрике (порядок = порядок метрик в виджете).
 const BAR_COLORS = [
   "#2563eb", // синий
   "#16a34a", // зелёный
   "#dc2626", // красный
-  "#0891b2", // голубой
-  "#9333ea", // фиолетовый
   "#ea580c", // оранжевый
+  "#9333ea", // фиолетовый
+  "#0891b2", // голубой
   "#ca8a04", // охра
   "#db2777", // розовый
 ];
 
-// Палитра для круговой диаграммы.
-// Более «пастельные» / приглушённые оттенки — секторы рядом не «жгут»
-// глаз. Намеренно отличается от BAR_COLORS, чтобы две диаграммы на
-// одном дашборде визуально различались.
+// Палитра для круговой диаграммы — приглушённые тона.
 const PIE_COLORS = [
   "#6366f1", // индиго
   "#14b8a6", // бирюзовый
@@ -44,13 +41,8 @@ const PIE_COLORS = [
   "#06b6d4", // циан
 ];
 
-// Зона под наклонные подписи XAxis в SVG.
 const X_AXIS_HEIGHT = 60;
-
-// Общий margin для чартов.
 const CHART_MARGIN = { top: 10, right: 20, bottom: 15, left: 0 };
-
-// Сколько подписей по оси X показывать максимум.
 const MAX_X_TICKS = 8;
 
 
@@ -60,15 +52,6 @@ function calcXAxisInterval(pointsCount) {
 }
 
 
-/**
- * Универсальный рендерер виджетов.
- *
- * props:
- *   type            — 'bar' | 'line' | 'pie' | 'table' | 'kpi_card'
- *   data            — { rows, metric_keys, dimension_keys } из /widgets/<id>/data
- *   isLoading       — bool
- *   error           — string | null
- */
 export default function WidgetRenderer({ type, data, isLoading, error }) {
   if (isLoading) {
     return <Placeholder>Загрузка...</Placeholder>;
@@ -82,10 +65,6 @@ export default function WidgetRenderer({ type, data, isLoading, error }) {
 
   const { rows, metric_keys: metricKeys, dimension_keys: dimensionKeys } = data;
 
-  if (type === "kpi_card") {
-    return <KpiInlineCard row={rows[0]} keys={metricKeys} />;
-  }
-
   if (type === "table") {
     return <DataTable rows={rows} columns={[...dimensionKeys, ...metricKeys]} />;
   }
@@ -97,8 +76,8 @@ export default function WidgetRenderer({ type, data, isLoading, error }) {
   const xKey = dimensionKeys[0];
 
   if (type === "bar") {
-    const singleMetric = metricKeys.length === 1;
-
+    // Однотонные столбики: цвет = цвет метрики (BAR_COLORS[i]).
+    // Для нескольких метрик каждая получает свой цвет в легенде.
     return (
       <ResponsiveContainer width="100%" height="100%">
         <BarChart data={rows} margin={CHART_MARGIN}>
@@ -120,12 +99,45 @@ export default function WidgetRenderer({ type, data, isLoading, error }) {
               dataKey={k}
               fill={BAR_COLORS[i % BAR_COLORS.length]}
               radius={[4, 4, 0, 0]}
-            >
-              {singleMetric &&
-                rows.map((_, idx) => (
-                  <Cell key={idx} fill={BAR_COLORS[idx % BAR_COLORS.length]} />
-                ))}
-            </Bar>
+            />
+          ))}
+        </BarChart>
+      </ResponsiveContainer>
+    );
+  }
+
+  if (type === "horizontal_bar") {
+    const maxLabel = rows.reduce((acc, r) => {
+      const s = String(r[xKey] ?? "");
+      return s.length > acc ? s.length : acc;
+    }, 0);
+    const yAxisWidth = Math.min(160, Math.max(60, maxLabel * 7));
+
+    return (
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart
+          data={rows}
+          layout="vertical"
+          margin={{ top: 10, right: 20, bottom: 10, left: 0 }}
+        >
+          <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+          <XAxis type="number" tick={{ fontSize: 12 }} />
+          <YAxis
+            type="category"
+            dataKey={xKey}
+            tick={{ fontSize: 12 }}
+            width={yAxisWidth}
+            interval={0}
+          />
+          <Tooltip />
+          <Legend />
+          {metricKeys.map((k, i) => (
+            <Bar
+              key={k}
+              dataKey={k}
+              fill={BAR_COLORS[i % BAR_COLORS.length]}
+              radius={[0, 4, 4, 0]}
+            />
           ))}
         </BarChart>
       </ResponsiveContainer>
@@ -172,7 +184,6 @@ export default function WidgetRenderer({ type, data, isLoading, error }) {
     if (!metricKey) {
       return <Placeholder>Pie-chart требует одну метрику</Placeholder>;
     }
-
     return <PieWithSideLegend rows={rows} xKey={xKey} metricKey={metricKey} />;
   }
 
@@ -180,24 +191,7 @@ export default function WidgetRenderer({ type, data, isLoading, error }) {
 }
 
 
-/**
- * Круговая диаграмма с вертикальной легендой справа.
- *
- * Почему не используем встроенный <Legend layout="vertical" align="right">:
- *  - он съедает фиксированный процент ширины SVG, и при длинных подписях
- *    обрезается;
- *  - его сложно стилизовать (нумерация, цветовые маркеры в формате квадратов,
- *    форматирование значений);
- *  - в нём показываются все элементы без ограничения, а у нас секторов
- *    может быть много — нужен скролл.
- *
- * Поэтому делаем кастомный лейаут: чарт занимает левые 2/3, легенда
- * — правые 1/3 с собственным скроллом. Сверху над всем — название метрики
- * (заменяет нижнюю легенду в bar/line-чартах, чтобы согласовать тип
- * визуализации).
- */
 function PieWithSideLegend({ rows, xKey, metricKey }) {
-  // Считаем итог, чтобы показать процент каждой доли в легенде
   const total = rows.reduce((acc, r) => {
     const v = r[metricKey];
     return acc + (typeof v === "number" ? v : 0);
@@ -205,7 +199,6 @@ function PieWithSideLegend({ rows, xKey, metricKey }) {
 
   return (
     <div className="flex h-full w-full flex-col gap-1">
-      {/* Шапка: имя метрики — аналог легенды в bar/line */}
       <div className="flex shrink-0 items-center gap-2 px-2 pt-1">
         <span
           className="inline-block h-3 w-3 rounded-sm"
@@ -215,7 +208,6 @@ function PieWithSideLegend({ rows, xKey, metricKey }) {
       </div>
 
       <div className="flex min-h-0 flex-1 gap-2">
-        {/* Диаграмма — занимает левую часть */}
         <div className="min-w-0 flex-1">
           <ResponsiveContainer width="100%" height="100%">
             <PieChart margin={{ top: 4, right: 4, bottom: 4, left: 4 }}>
@@ -237,9 +229,6 @@ function PieWithSideLegend({ rows, xKey, metricKey }) {
           </ResponsiveContainer>
         </div>
 
-        {/* Легенда справа — список «цвет + имя сектора + значение/процент».
-            Скроллится, если секторов много. shrink-0 + фикс. ширина дают
-            одинаковую раскладку независимо от размера виджета. */}
         <div className="w-40 shrink-0 overflow-auto pr-1 text-xs">
           <ul className="space-y-1">
             {rows.map((r, i) => {
@@ -259,18 +248,18 @@ function PieWithSideLegend({ rows, xKey, metricKey }) {
                       backgroundColor: PIE_COLORS[i % PIE_COLORS.length],
                     }}
                   />
-                    <div className="min-w-0 flex-1">
-                      <div
-                        className="text-slate-700 break-words leading-tight"
-                        title={String(r[xKey] ?? "")}
-                      >
-                        {r[xKey] ?? "—"}
-                      </div>
-                      <div className="text-[10px] text-slate-500">
-                        {formatted}
-                        {pct !== null && ` · ${pct}%`}
-                      </div>
+                  <div className="min-w-0 flex-1">
+                    <div
+                      className="text-slate-700 break-words leading-tight"
+                      title={String(r[xKey] ?? "")}
+                    >
+                      {r[xKey] ?? "—"}
                     </div>
+                    <div className="text-[10px] text-slate-500">
+                      {formatted}
+                      {pct !== null && ` · ${pct}%`}
+                    </div>
+                  </div>
                 </li>
               );
             })}
@@ -290,30 +279,6 @@ function Placeholder({ children, error }) {
       }`}
     >
       {children}
-    </div>
-  );
-}
-
-
-function KpiInlineCard({ row, keys }) {
-  return (
-    <div className="grid h-full w-full grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-      {keys.map((k) => {
-        const value = row?.[k];
-        const formatted =
-          typeof value === "number"
-            ? value.toLocaleString("ru-RU", { maximumFractionDigits: 2 })
-            : (value ?? "—");
-        return (
-          <div
-            key={k}
-            className="flex flex-col justify-center rounded-xl bg-blue-50 p-4 text-center"
-          >
-            <p className="text-xs uppercase tracking-wider text-blue-700">{k}</p>
-            <p className="mt-2 text-3xl font-bold text-blue-900">{formatted}</p>
-          </div>
-        );
-      })}
     </div>
   );
 }

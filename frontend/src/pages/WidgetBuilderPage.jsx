@@ -15,6 +15,7 @@ import {
   Pencil,
   Check,
   X,
+  BarChart2
 } from "lucide-react";
 
 import { listDatasets, getDataset } from "../api/datasetApi";
@@ -49,7 +50,7 @@ const WIDGET_TYPES = [
   { value: "line", label: "Линия", icon: LineIcon },
   { value: "pie", label: "Круг", icon: PieIcon },
   { value: "table", label: "Таблица", icon: TableIcon },
-  { value: "kpi_card", label: "KPI", icon: Hash },
+  { value: "horizontal_bar", label: "Линейчатая", icon: BarChart2 },
 ];
 
 const AGGREGATIONS = [

@@ -6,6 +6,11 @@ class DashboardKPI(db.Model):
     Связующая таблица «дашборд — KPI» (M:N) с координатами размещения.
     По аналогии с DashboardWidget: один KPI может быть размещён на нескольких
     дашбордах в разных местах.
+
+    overlaps на dashboard/kpi нужен, чтобы SQLAlchemy понимал, что эти связи
+    разделяют те же FK с relationship KPI.dashboards и Dashboard.kpis
+    (которые сделаны viewonly=True). Это устраняет SAWarning при загрузке
+    моделей.
     """
     __tablename__ = "dashboard_kpis"
 
@@ -28,12 +33,14 @@ class DashboardKPI(db.Model):
 
     dashboard = db.relationship(
         "Dashboard",
-        back_populates="dashboard_kpis"
+        back_populates="dashboard_kpis",
+        overlaps="dashboards,kpis",
     )
 
     kpi = db.relationship(
         "KPI",
-        back_populates="dashboard_links"
+        back_populates="dashboard_links",
+        overlaps="dashboards,kpis",
     )
 
     def to_dict(self):

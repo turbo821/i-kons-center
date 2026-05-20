@@ -37,7 +37,7 @@ widget_bp = Blueprint("widgets", __name__, url_prefix="/api/widgets")
 
 EDITOR_ROLES = ("admin", "expert")
 
-ALLOWED_WIDGET_TYPES = {"bar", "line", "pie", "table", "kpi_card"}
+ALLOWED_WIDGET_TYPES = {"bar", "line", "pie", "table", "horizontal_bar"}
 
 
 def _resolve_metrics(metric_ids: list[int]) -> tuple[list[Metric], Optional[str]]:
