@@ -260,6 +260,7 @@ export default function DataSourceDetailPage() {
                 key={ds.id}
                 ds={ds}
                 canEdit={canEdit}
+                sourceType={datasource.type}
                 onPreview={() => handlePreview(ds.id, ds.name)}
                 onRefresh={() => handleRefresh(ds.id)}
                 onDelete={() => handleDeleteDataset(ds)}
@@ -324,7 +325,7 @@ export default function DataSourceDetailPage() {
 }
 
 
-function DatasetRow({ isFileSource, ds, canEdit, onPreview, onRefresh, onDelete, onEdit }) {
+function DatasetRow({ isFileSource, ds, sourceType, canEdit, onPreview, onRefresh, onDelete, onEdit }) {
   const [showSql, setShowSql] = useState(false);
   // Можно ли редактировать датасет? Если есть зависимые виджеты — нельзя
   const isLocked = (ds.widgets_count || 0) > 0 || (ds.metrics_count || 0) > 0;
@@ -376,14 +377,16 @@ function DatasetRow({ isFileSource, ds, canEdit, onPreview, onRefresh, onDelete,
 
         {canEdit && (
           <>
+          {(sourceType === "csv_link" || sourceType === "postgres" || sourceType === "mysql") && (
             <button
               onClick={onRefresh}
-              title="Обновить структуру полей (после изменения источника)"
+              title="Перечитать поля из источника (если изменились столбцы)"
               className="flex items-center gap-1 rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-medium hover:bg-slate-200"
             >
               <RefreshCw size={12} />
               Обновить структуру
             </button>
+          )}
             <button
               onClick={onEdit}
               disabled={isLocked}
