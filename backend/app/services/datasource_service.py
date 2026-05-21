@@ -61,15 +61,30 @@ def save_uploaded_file(file: FileStorage) -> str:
     """
     Сохраняет загруженный файл на диск с уникальным именем.
     Возвращает абсолютный путь — он попадёт в DataSource.connection_string.
+
+    Особенность: secure_filename из Werkzeug по умолчанию вырезает не-ASCII
+    символы. Для кириллических имён ("Данные.xlsx") он съест и название,
+    и иногда расширение (если на расширении остаётся только латиница без
+    точки). Поэтому расширение мы вытаскиваем из исходного file.filename
+    ДО санитизации и приклеиваем его к итоговому имени отдельно.
     """
     upload_dir = current_app.config["UPLOAD_FOLDER"]
     os.makedirs(upload_dir, exist_ok=True)
 
-    original_name = secure_filename(file.filename)
-    if not original_name:
-        raise ValueError("Имя файла недопустимо")
+    # Расширение берём из исходного имени, ДО secure_filename
+    _, ext = os.path.splitext(file.filename or "")
+    ext = (ext or "").lower()  # ".xlsx", ".csv", ".xls" или ""
 
-    unique_name = f"{uuid.uuid4().hex}__{original_name}"
+    # Санитизированное «имя без расширения». Может оказаться пустым
+    # (например, для имени «Данные.xlsx» → секьюр-фильтр оставит "xlsx",
+    # а splitext по этому уже даст ("xlsx", "")).
+    safe_full = secure_filename(file.filename or "")
+    safe_base, _ = os.path.splitext(safe_full)
+    if not safe_base:
+        safe_base = "file"
+
+    # Финальное имя: <uuid>__<имя_без_расширения><расширение>
+    unique_name = f"{uuid.uuid4().hex}__{safe_base}{ext}"
     full_path = os.path.join(upload_dir, unique_name)
 
     file.save(full_path)

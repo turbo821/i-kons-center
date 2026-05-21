@@ -211,6 +211,7 @@ export default function DataSourceDetailPage() {
                   Изменить соединение
                 </button>
               )}
+            {!isFileSource && (
               <button
                 onClick={() => setCreateOpen(true)}
                 className="flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
@@ -218,6 +219,7 @@ export default function DataSourceDetailPage() {
                 <Plus size={18} />
                 Создать набор данных
               </button>
+            )}
             </div>
           )}
         </div>
@@ -254,6 +256,7 @@ export default function DataSourceDetailPage() {
           <div className="space-y-3">
             {filteredDatasets.map((ds) => (
               <DatasetRow
+                isFileSource={isFileSource}
                 key={ds.id}
                 ds={ds}
                 canEdit={canEdit}
@@ -321,7 +324,7 @@ export default function DataSourceDetailPage() {
 }
 
 
-function DatasetRow({ ds, canEdit, onPreview, onRefresh, onDelete, onEdit }) {
+function DatasetRow({ isFileSource, ds, canEdit, onPreview, onRefresh, onDelete, onEdit }) {
   const [showSql, setShowSql] = useState(false);
   // Можно ли редактировать датасет? Если есть зависимые виджеты — нельзя
   const isLocked = (ds.widgets_count || 0) > 0 || (ds.metrics_count || 0) > 0;
@@ -393,12 +396,14 @@ function DatasetRow({ ds, canEdit, onPreview, onRefresh, onDelete, onEdit }) {
             >
               <Pencil size={12} />
             </button>
+          {!isFileSource && (
             <button
               onClick={onDelete}
               className="flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50"
             >
               <Trash2 size={12} />
             </button>
+          )}
           </>
         )}
       </div>

@@ -37,28 +37,63 @@ widget_bp = Blueprint("widgets", __name__, url_prefix="/api/widgets")
 
 EDITOR_ROLES = ("admin", "expert")
 
-ALLOWED_WIDGET_TYPES = {"bar", "line", "pie", "table", "horizontal_bar"}
+ALLOWED_WIDGET_TYPES = {"bar", "horizontal_bar", "line", "pie", "table"}
 
 
-def _resolve_metrics(metric_ids: list[int]) -> tuple[list[Metric], Optional[str]]:
+def _resolve_metrics(
+    metric_ids: list[int],
+    dataset_id: int,
+) -> tuple[list[Metric], Optional[str]]:
+    """
+    Загружает метрики по id и проверяет, что все они принадлежат указанному
+    датасету (через field.dataset_id).
+
+    Эта проверка закрывает класс багов «виджет привязан к датасету X,
+    но метрика — к полю датасета Y»: при попытке посчитать данные виджет
+    либо обращается к колонке, которой нет в X, либо использует чужие
+    значения. Здесь мы ловим это на этапе сохранения.
+    """
     if not metric_ids:
         return [], None
     items = db.session.query(Metric).filter(Metric.id.in_(metric_ids)).all()
     if len(items) != len(set(metric_ids)):
         return [], "Часть метрик не найдена"
+
+    foreign = [m for m in items if m.field.dataset_id != dataset_id]
+    if foreign:
+        names = ", ".join(m.name for m in foreign)
+        return [], (
+            f"Метрика(и) «{names}» относятся к другому набору данных. "
+            "Выберите метрики того же набора данных, что и виджет."
+        )
     return items, None
 
 
-def _resolve_dimensions(dim_ids: list[int]) -> tuple[list[Dimension], Optional[str]]:
+def _resolve_dimensions(
+    dim_ids: list[int],
+    dataset_id: int,
+) -> tuple[list[Dimension], Optional[str]]:
+    """Аналогично _resolve_metrics — проверяем принадлежность к датасету."""
     if not dim_ids:
         return [], None
     items = db.session.query(Dimension).filter(Dimension.id.in_(dim_ids)).all()
     if len(items) != len(set(dim_ids)):
         return [], "Часть измерений не найдена"
+
+    foreign = [d for d in items if d.field.dataset_id != dataset_id]
+    if foreign:
+        names = ", ".join(d.name for d in foreign)
+        return [], (
+            f"Измерение(я) «{names}» относятся к другому набору данных. "
+            "Выберите измерения того же набора данных, что и виджет."
+        )
     return items, None
 
 
-def _replace_filters(widget: Widget, filters_data: list[dict]) -> Optional[str]:
+def _replace_filters(
+    widget: Widget,
+    filters_data: list[dict],
+) -> Optional[str]:
     for old in list(widget.filters):
         db.session.delete(old)
     db.session.flush()
@@ -77,8 +112,16 @@ def _replace_filters(widget: Widget, filters_data: list[dict]) -> Optional[str]:
                 f"Разрешены: {', '.join(FILTER_OPERATORS)}"
             )
 
-        if not db.session.get(DatasetField, field_id):
+        # Поле должно существовать и принадлежать датасету виджета —
+        # та же логика, что для метрик/измерений.
+        field = db.session.get(DatasetField, field_id)
+        if not field:
             return f"Поле id={field_id} не найдено"
+        if field.dataset_id != widget.dataset_id:
+            return (
+                f"Поле фильтра «{field.name}» относится к другому "
+                "набору данных"
+            )
 
         new_filter = Filter(
             widget_id=widget.id,
@@ -153,7 +196,8 @@ def create_widget():
             )
         }), 400
 
-    if not db.session.get(Dataset, data["dataset_id"]):
+    dataset_id = data["dataset_id"]
+    if not db.session.get(Dataset, dataset_id):
         return jsonify({"message": "Датасет не найден"}), 404
 
     category_id = data.get("category_id")
@@ -161,16 +205,19 @@ def create_widget():
         return jsonify({
             "message": f"Категория id={category_id} не найдена"
         }), 400
-    metrics, err = _resolve_metrics(data.get("metric_ids") or [])
+
+    metrics, err = _resolve_metrics(data.get("metric_ids") or [], dataset_id)
     if err:
         return jsonify({"message": err}), 400
 
-    dimensions, err = _resolve_dimensions(data.get("dimension_ids") or [])
+    dimensions, err = _resolve_dimensions(
+        data.get("dimension_ids") or [], dataset_id
+    )
     if err:
         return jsonify({"message": err}), 400
 
     widget = Widget(
-        dataset_id=data["dataset_id"],
+        dataset_id=dataset_id,
         title=data["title"],
         type=data["type"],
         category_id=category_id,
@@ -214,6 +261,17 @@ def update_widget(widget_id):
 
     data = request.json or {}
 
+    # Смена dataset_id небезопасна, пока есть привязанные метрики/измерения
+    # /фильтры из старого датасета. Если хочется реально менять датасет —
+    # надо одновременно прислать новые metric_ids/dimension_ids/filters
+    # из нового датасета. Поэтому валидация происходит ниже — после
+    # применения нового dataset_id (если передан).
+    if "dataset_id" in data:
+        new_ds_id = data["dataset_id"]
+        if not db.session.get(Dataset, new_ds_id):
+            return jsonify({"message": "Датасет не найден"}), 404
+        widget.dataset_id = new_ds_id
+
     for field in ("title", "type"):
         if field in data:
             if field == "type" and data[field] not in ALLOWED_WIDGET_TYPES:
@@ -228,14 +286,17 @@ def update_widget(widget_id):
             }), 400
         widget.category_id = cat
 
+    # Все resolve-проверки идут против актуального dataset_id виджета.
     if "metric_ids" in data:
-        metrics, err = _resolve_metrics(data["metric_ids"])
+        metrics, err = _resolve_metrics(data["metric_ids"], widget.dataset_id)
         if err:
             return jsonify({"message": err}), 400
         widget.metrics = metrics
 
     if "dimension_ids" in data:
-        dims, err = _resolve_dimensions(data["dimension_ids"])
+        dims, err = _resolve_dimensions(
+            data["dimension_ids"], widget.dataset_id
+        )
         if err:
             return jsonify({"message": err}), 400
         widget.dimensions = dims

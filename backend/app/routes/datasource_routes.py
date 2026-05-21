@@ -3,7 +3,7 @@ REST API для работы с источниками данных.
 
 Маршруты:
     GET    /api/datasources              — список
-    POST   /api/datasources               — создать (JSON, SQL-источник)
+    POST   /api/datasources               — создать SQL-источник
     POST   /api/datasources/upload        — загрузить CSV/Excel
     POST   /api/datasources/link          — создать «ссылку» на файл по пути
     GET    /api/datasources/<id>          — получить один
@@ -11,17 +11,19 @@ REST API для работы с источниками данных.
     DELETE /api/datasources/<id>          — удалить
     POST   /api/datasources/<id>/test     — проверка подключения
     GET    /api/datasources/<id>/tables   — список таблиц источника
-    POST   /api/datasources/<id>/replace-file  — заменить файл (только csv)
-    PUT    /api/datasources/<id>/connection    — обновить SQL-соединение
-    PUT    /api/datasources/<id>/link-path     — обновить путь к файлу (csv_link)
+    POST   /api/datasources/<id>/replace-file
+    PUT    /api/datasources/<id>/connection
+    PUT    /api/datasources/<id>/link-path
 """
 
 import json
+import os
+
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 
 from app.database.db import db
-from app.models import DataSource, DataSourceCategory
+from app.models import DataSource, DataSourceCategory, Dataset, DatasetField
 from app.auth.decorators import role_required
 from app.services import datasource_service as ds_service
 
@@ -33,6 +35,48 @@ datasource_bp = Blueprint(
 )
 
 EDITOR_ROLES = ("admin", "expert")
+
+
+def _auto_create_file_dataset(ds: DataSource, dataset_name: str) -> Dataset:
+    """
+    Создать датасет автоматически для файлового источника (csv / csv_link).
+
+    Для файла существует ровно один «логический» набор данных — содержимое
+    файла. Пользователю не нужно создавать его руками; он появляется сразу
+    при создании источника. Имя датасета можно изменить позже на странице
+    деталей источника.
+
+    Поля датасета определяются через инспекцию файла (pandas dtypes).
+    """
+    fields_info = ds_service.inspect_dataset(ds, query=None)
+
+    dataset = Dataset(
+        datasource_id=ds.id,
+        name=dataset_name,
+        sql_query=None,
+    )
+    db.session.add(dataset)
+    db.session.flush()
+
+    for info in fields_info:
+        db.session.add(DatasetField(
+            dataset_id=dataset.id,
+            name=info["name"],
+            data_type=info["data_type"],
+        ))
+
+    return dataset
+
+
+def _default_dataset_name_from_path(path: str) -> str:
+    """Имя файла без uuid-префикса и без расширения."""
+    base = os.path.basename(path)
+    # Для uploaded-файлов снимаем uuid-префикс «hash__»
+    if "__" in base:
+        base = base.split("__", 1)[-1]
+    # Убираем расширение
+    name, _ = os.path.splitext(base)
+    return name or "Набор данных"
 
 
 @datasource_bp.route("", methods=["GET"])
@@ -102,7 +146,12 @@ def create_sql_datasource():
 @datasource_bp.route("/upload", methods=["POST"])
 @role_required(*EDITOR_ROLES)
 def upload_file_datasource():
-    """multipart/form-data: file, name?, category_id?"""
+    """multipart/form-data: file, name?, category_id?
+
+    После создания источника автоматически создаётся датасет с именем
+    файла (без расширения). Это связано с тем, что файловый источник
+    содержит ровно один набор данных, и руками его создавать смысла нет.
+    """
     if "file" not in request.files:
         return jsonify({"message": "Файл не передан (поле 'file')"}), 400
 
@@ -145,8 +194,23 @@ def upload_file_datasource():
         }), 400
 
     db.session.add(ds)
-    db.session.commit()
+    db.session.flush()  # нужен id источника для FK на датасет
 
+    # Авто-создание датасета. Если инспекция вдруг упадёт (битый файл),
+    # откатываем всё.
+    try:
+        _auto_create_file_dataset(
+            ds,
+            _default_dataset_name_from_path(saved_path),
+        )
+    except (ValueError, OSError) as e:
+        db.session.rollback()
+        ds_service.remove_file_if_exists(saved_path)
+        return jsonify({
+            "message": f"Не удалось разобрать файл: {e}"
+        }), 400
+
+    db.session.commit()
     return jsonify(ds.to_dict()), 201
 
 
@@ -157,19 +221,8 @@ def upload_file_datasource():
 @role_required(*EDITOR_ROLES)
 def create_link_datasource():
     """
-    Создаёт источник типа csv_link: connection_string хранит абсолютный
-    путь к существующему файлу на сервере. Файл не копируется в uploads/.
-
-    Body:
-    {
-      "name": "Продажи Q1",
-      "path": "C:/data/sales.csv",   # или /opt/data/sales.xlsx
-      "category_id": 1
-    }
-
-    Изменения в файле автоматически подхватываются — при каждом чтении
-    мы открываем файл заново. Если файл будет удалён или перемещён,
-    источник перестанет работать (вернёт «Файл не найден»).
+    Создаёт источник типа csv_link и автоматически — один датасет под него.
+    Файл не копируется в uploads/; путь хранится в connection_string.
     """
     data = request.json or {}
 
@@ -202,8 +255,20 @@ def create_link_datasource():
         created_by=user_id,
     )
     db.session.add(ds)
-    db.session.commit()
+    db.session.flush()
 
+    try:
+        _auto_create_file_dataset(
+            ds,
+            _default_dataset_name_from_path(path),
+        )
+    except (ValueError, OSError) as e:
+        db.session.rollback()
+        return jsonify({
+            "message": f"Не удалось разобрать файл: {e}"
+        }), 400
+
+    db.session.commit()
     return jsonify(ds.to_dict()), 201
 
 

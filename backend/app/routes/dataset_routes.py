@@ -1,5 +1,12 @@
 """
 REST API для наборов данных.
+
+Политика для файловых источников (csv, csv_link):
+  - датасет создаётся автоматически при создании источника
+    (см. datasource_routes.upload_file_datasource / create_link_datasource);
+  - вручную создавать и удалять датасет нельзя — у файлового источника
+    есть ровно один логический датасет, привязанный к содержимому файла;
+  - переименовать датасет можно (PUT /api/datasets/<id>).
 """
 
 from flask import Blueprint, request, jsonify
@@ -14,6 +21,10 @@ from app.services import datasource_service as ds_service
 dataset_bp = Blueprint("datasets", __name__, url_prefix="/api/datasets")
 
 EDITOR_ROLES = ("admin", "expert")
+
+# Источники, где датасеты управляются системой (auto-create) и не могут
+# создаваться/удаляться вручную.
+FILE_LIKE_TYPES = ("csv", "csv_link")
 
 
 def _sync_dataset_fields(dataset: Dataset, fields_info: list[dict]) -> None:
@@ -41,8 +52,6 @@ def _sync_dataset_fields(dataset: Dataset, fields_info: list[dict]) -> None:
 @jwt_required()
 def list_datasets():
     """Опционально можно фильтровать по datasource_id."""
-    # Используем db.session.query(...) — это явная и устойчивая форма,
-    # которая не конфликтует с возможными именами колонок.
     q = db.session.query(Dataset)
 
     ds_id = request.args.get("datasource_id", type=int)
@@ -60,14 +69,17 @@ def list_datasets():
 @role_required(*EDITOR_ROLES)
 def create_dataset():
     """
-    Body:
+    Body для SQL-источников:
     {
       "datasource_id": 1,
       "name": "Продажи 2024",
-      "table_name": "sales"   // для SQL
-       либо
-      "query": "SELECT ..."   // для SQL
+      "table_name": "sales"   // или
+      "query": "SELECT ..."
     }
+
+    Для файловых источников (csv / csv_link) ручное создание датасетов
+    запрещено: датасет один и создаётся автоматически при создании
+    источника.
     """
     data = request.json or {}
 
@@ -80,10 +92,19 @@ def create_dataset():
     if ds is None:
         return jsonify({"message": "Источник данных не найден"}), 404
 
+    if ds.type in FILE_LIKE_TYPES:
+        return jsonify({
+            "message": (
+                "Для файловых источников (CSV / Excel) набор данных "
+                "создаётся автоматически при загрузке файла. "
+                "Дополнительные наборы данных создавать нельзя."
+            )
+        }), 400
+
     table_name = data.get("table_name")
     user_query = data.get("query")
 
-    if ds.type in ("postgres", "mysql") and not (table_name or user_query):
+    if not (table_name or user_query):
         return jsonify({
             "message": "Для SQL-источников нужно указать table_name или query"
         }), 400
@@ -143,6 +164,16 @@ def delete_dataset(dataset_id):
     dataset = db.session.get(Dataset, dataset_id)
     if dataset is None:
         return jsonify({"message": "Не найдено"}), 404
+
+    # Защита: для файловых источников удаление через API запрещено.
+    # Удалить датасет можно только удалив сам источник целиком.
+    if dataset.datasource.type in FILE_LIKE_TYPES:
+        return jsonify({
+            "message": (
+                "Нельзя удалить: для файловых источников набор данных "
+                "управляется системой. Удалите источник целиком."
+            )
+        }), 409
 
     if dataset.widgets:
         return jsonify({
@@ -217,49 +248,69 @@ def update_dataset(ds_id):
       "name": "...",
       "query": "SELECT ..."   (опционально, только для SQL-источников)
     }
-    Если query изменился, поля датасета будут переопределены.
-    Запрещено редактировать, если есть зависимые виджеты или метрики.
+    Для файловых источников можно менять только имя.
     """
     dataset = db.session.get(Dataset, ds_id)
     if dataset is None:
         return jsonify({"message": "Не найдено"}), 404
 
-    # Защита: нельзя менять датасет, если есть зависимые виджеты или метрики
-    has_widgets = len(dataset.widgets) > 0 if hasattr(dataset, "widgets") else False
-    has_metrics = any(f.metrics for f in dataset.fields)
-    has_dimensions = any(f.dimensions for f in dataset.fields)
-
-    if has_widgets or has_metrics or has_dimensions:
-        return jsonify({
-            "message": (
-                "Нельзя редактировать: к набору данных привязаны "
-                "виджеты, метрики или измерения"
-            )
-        }), 409
-
     data = request.json or {}
 
+    # Имя можно менять всегда — даже если есть зависимые виджеты,
+    # это безопасное переименование.
     if "name" in data:
         if not data["name"]:
             return jsonify({"message": "Имя не может быть пустым"}), 400
         dataset.name = data["name"]
 
-    if "query" in data and dataset.datasource.type not in ("csv", "csv_link"):
+    # query можно менять только для SQL-источников и только если
+    # нет зависимых виджетов/метрик/измерений (потому что поля могут
+    # переопределиться).
+    if "query" in data:
+        if dataset.datasource.type in FILE_LIKE_TYPES:
+            return jsonify({
+                "message": (
+                    "Для файловых источников нельзя задать SQL-запрос: "
+                    "набор данных строится по содержимому файла целиком."
+                )
+            }), 400
+
+        has_widgets = bool(dataset.widgets)
+        has_metrics = any(f.metrics for f in dataset.fields)
+        has_dimensions = any(f.dimensions for f in dataset.fields)
+
+        if has_widgets or has_metrics or has_dimensions:
+            return jsonify({
+                "message": (
+                    "Нельзя менять запрос: к набору данных привязаны "
+                    "виджеты, метрики или измерения"
+                )
+            }), 409
+
         if not data["query"]:
             return jsonify({"message": "query не может быть пустым"}), 400
+
         dataset.sql_query = data["query"]
 
-        # Переопределяем поля
         for f in list(dataset.fields):
             db.session.delete(f)
         db.session.flush()
         try:
-            ds_service.inspect_dataset(dataset.datasource, data["query"])
+            fields_info = ds_service.inspect_dataset(
+                dataset.datasource, data["query"]
+            )
         except (ValueError, OSError, KeyError) as e:
             db.session.rollback()
             return jsonify({
                 "message": f"Не удалось определить поля: {e}"
             }), 400
+
+        for info in fields_info:
+            db.session.add(DatasetField(
+                dataset_id=dataset.id,
+                name=info["name"],
+                data_type=info["data_type"],
+            ))
 
     db.session.commit()
     return jsonify(dataset.to_dict(include_fields=True))
