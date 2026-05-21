@@ -5,17 +5,14 @@
     - "csv"      — загруженный CSV/Excel-файл (хранится в uploads/)
     - "csv_link" — CSV/Excel-файл «по ссылке»: connection_string хранит путь
                    к существующему файлу на сервере; файл не копируется и
-                   не удаляется системой. При каждом чтении данные берутся
-                   свежими (полезно, если файл регулярно обновляется
-                   внешним процессом).
+                   не удаляется системой.
     - "postgres" — внешняя БД PostgreSQL
     - "mysql"    — внешняя БД MySQL
 
-Публичный API:
-    - test_connection(datasource)          → (ok, message)
-    - list_tables(datasource)              → list[str]
-    - read_dataset(datasource, query)      → pandas.DataFrame
-    - inspect_dataset(datasource, query)   → list[{name, data_type}]
+Для Excel-файлов поддерживается несколько листов:
+    - функция list_excel_sheets(path) возвращает имена листов;
+    - inspect_dataset / read_dataset для xlsx используют параметр `query`
+      датасета как имя листа (для csv `query` всегда None).
 """
 
 import os
@@ -39,10 +36,8 @@ from app.services.type_mapping import (
 PREVIEW_ROW_LIMIT = 1000
 TYPE_INSPECTION_SAMPLE = 100
 
-# Множество типов источников, использующих файловое чтение через pandas.
-# Используется во многих местах — выделили константу, чтобы не плодить
-# дубли "if t == csv or t == csv_link".
 FILE_TYPES = ("csv", "csv_link")
+EXCEL_EXTENSIONS = ("xls", "xlsx")
 
 
 # --------------------------------------------------------------------------
@@ -50,11 +45,20 @@ FILE_TYPES = ("csv", "csv_link")
 # --------------------------------------------------------------------------
 
 def is_allowed_file(filename: str) -> bool:
-    """Проверка расширения по белому списку из конфига."""
     if "." not in filename:
         return False
     ext = filename.rsplit(".", 1)[1].lower()
     return ext in current_app.config["ALLOWED_FILE_EXTENSIONS"]
+
+
+def _file_extension(path: str) -> str:
+    """Возвращает расширение файла без точки и в нижнем регистре."""
+    _, ext = os.path.splitext(path)
+    return ext.lstrip(".").lower()
+
+
+def is_excel_file(path: str) -> bool:
+    return _file_extension(path) in EXCEL_EXTENSIONS
 
 
 def save_uploaded_file(file: FileStorage) -> str:
@@ -63,27 +67,21 @@ def save_uploaded_file(file: FileStorage) -> str:
     Возвращает абсолютный путь — он попадёт в DataSource.connection_string.
 
     Особенность: secure_filename из Werkzeug по умолчанию вырезает не-ASCII
-    символы. Для кириллических имён ("Данные.xlsx") он съест и название,
-    и иногда расширение (если на расширении остаётся только латиница без
-    точки). Поэтому расширение мы вытаскиваем из исходного file.filename
-    ДО санитизации и приклеиваем его к итоговому имени отдельно.
+    символы. Для кириллических имён («Данные.xlsx») он съест и название,
+    и расширение. Поэтому расширение мы вытаскиваем из исходного
+    file.filename ДО санитизации и приклеиваем его к итоговому имени.
     """
     upload_dir = current_app.config["UPLOAD_FOLDER"]
     os.makedirs(upload_dir, exist_ok=True)
 
-    # Расширение берём из исходного имени, ДО secure_filename
     _, ext = os.path.splitext(file.filename or "")
-    ext = (ext or "").lower()  # ".xlsx", ".csv", ".xls" или ""
+    ext = (ext or "").lower()
 
-    # Санитизированное «имя без расширения». Может оказаться пустым
-    # (например, для имени «Данные.xlsx» → секьюр-фильтр оставит "xlsx",
-    # а splitext по этому уже даст ("xlsx", "")).
     safe_full = secure_filename(file.filename or "")
     safe_base, _ = os.path.splitext(safe_full)
     if not safe_base:
         safe_base = "file"
 
-    # Финальное имя: <uuid>__<имя_без_расширения><расширение>
     unique_name = f"{uuid.uuid4().hex}__{safe_base}{ext}"
     full_path = os.path.join(upload_dir, unique_name)
 
@@ -92,7 +90,6 @@ def save_uploaded_file(file: FileStorage) -> str:
 
 
 def remove_file_if_exists(path: str) -> None:
-    """Безопасно удаляет файл (используется только для type='csv')."""
     if path and os.path.isfile(path):
         try:
             os.remove(path)
@@ -101,13 +98,7 @@ def remove_file_if_exists(path: str) -> None:
 
 
 def validate_external_file_path(path: str) -> tuple[bool, str]:
-    """
-    Проверяет, что указанный путь существует, является файлом, имеет
-    разрешённое расширение и может быть прочитан pandas.
-
-    Используется для type='csv_link', где пользователь сам вводит путь.
-    Возвращает (ok, message).
-    """
+    """Проверяет путь для type='csv_link'."""
     if not path:
         return False, "Путь не указан"
 
@@ -120,8 +111,16 @@ def validate_external_file_path(path: str) -> tuple[bool, str]:
     if not is_allowed_file(path):
         return False, "Поддерживаются только файлы CSV, XLS, XLSX"
 
+    # Проверка читаемости — пробуем открыть. Для Excel читаем первый
+    # лист, чтобы не тащить весь файл в память при валидации.
     try:
-        _read_file_to_df(path, nrows=1)
+        if is_excel_file(path):
+            sheets = list_excel_sheets(path)
+            if not sheets:
+                return False, "В Excel-файле нет листов"
+            _read_file_to_df(path, nrows=1, sheet_name=sheets[0])
+        else:
+            _read_file_to_df(path, nrows=1)
     except (ValueError, OSError, pd.errors.ParserError) as e:
         return False, f"Файл невозможно прочитать: {e}"
 
@@ -132,12 +131,28 @@ def validate_external_file_path(path: str) -> tuple[bool, str]:
 # Чтение CSV/Excel
 # --------------------------------------------------------------------------
 
+def list_excel_sheets(file_path: str) -> list[str]:
+    """
+    Возвращает имена листов Excel-файла.
+    pd.ExcelFile читает только метаданные, не загружая данные листов.
+    """
+    if not is_excel_file(file_path):
+        return []
+    with pd.ExcelFile(file_path) as xf:
+        return list(xf.sheet_names)
+
+
 def _read_file_to_df(
     file_path: str,
-    nrows: Optional[int] = None
+    nrows: Optional[int] = None,
+    sheet_name: Optional[str] = None,
 ) -> pd.DataFrame:
-    """Читает CSV или Excel в DataFrame в зависимости от расширения."""
-    ext = file_path.rsplit(".", 1)[1].lower()
+    """
+    Читает CSV или Excel в DataFrame.
+    Для Excel параметр sheet_name указывает конкретный лист (по умолчанию
+    берётся первый лист).
+    """
+    ext = _file_extension(file_path)
 
     if ext == "csv":
         try:
@@ -145,10 +160,15 @@ def _read_file_to_df(
         except UnicodeDecodeError:
             return pd.read_csv(file_path, nrows=nrows, encoding="cp1251")
 
-    if ext in ("xls", "xlsx"):
-        return pd.read_excel(file_path, nrows=nrows)
+    if ext in EXCEL_EXTENSIONS:
+        # Если лист не указан — берём первый (pd.read_excel так и делает
+        # по умолчанию). Если указан несуществующий — read_excel поднимет
+        # ValueError, что мы поймаем выше.
+        if sheet_name is None:
+            return pd.read_excel(file_path, nrows=nrows)
+        return pd.read_excel(file_path, sheet_name=sheet_name, nrows=nrows)
 
-    raise ValueError(f"Неподдерживаемое расширение: {ext}")
+    raise ValueError(f"Неподдерживаемое расширение: {ext or '<нет>'}")
 
 
 # --------------------------------------------------------------------------
@@ -156,10 +176,6 @@ def _read_file_to_df(
 # --------------------------------------------------------------------------
 
 def _build_sql_engine(datasource):
-    """
-    Создаёт SQLAlchemy engine для внешней БД.
-    connection_string хранит JSON: {host, port, database, user, password}.
-    """
     try:
         params = json.loads(datasource.connection_string)
     except json.JSONDecodeError as e:
@@ -187,12 +203,23 @@ def _build_sql_engine(datasource):
 # --------------------------------------------------------------------------
 
 def test_connection(datasource) -> tuple[bool, str]:
-    """Проверка работоспособности подключения. Возвращает (успех, сообщение)."""
+    """Возвращает (успех, сообщение)."""
     try:
         if datasource.type in FILE_TYPES:
             if not os.path.isfile(datasource.connection_string):
                 return False, "Файл не найден"
-            _read_file_to_df(datasource.connection_string, nrows=1)
+            # Для xlsx проверяем что есть хотя бы один лист и он читается
+            if is_excel_file(datasource.connection_string):
+                sheets = list_excel_sheets(datasource.connection_string)
+                if not sheets:
+                    return False, "В Excel-файле нет листов"
+                _read_file_to_df(
+                    datasource.connection_string,
+                    nrows=1,
+                    sheet_name=sheets[0],
+                )
+            else:
+                _read_file_to_df(datasource.connection_string, nrows=1)
             return True, "OK"
 
         if datasource.type in ("postgres", "mysql"):
@@ -211,13 +238,16 @@ def test_connection(datasource) -> tuple[bool, str]:
 
 def list_tables(datasource) -> list[str]:
     """
-    Возвращает список «таблиц» источника:
-      - для csv / csv_link: одна виртуальная «таблица» с именем файла;
-      - для SQL: реальные таблицы и представления через INSPECT.
+    Список «таблиц»:
+      - csv: одна виртуальная таблица с именем файла;
+      - xlsx: имена листов;
+      - SQL: реальные таблицы и представления.
     """
     if datasource.type in FILE_TYPES:
-        base = os.path.basename(datasource.connection_string)
-        # Для uploaded-файлов убираем uuid-префикс «hash__»
+        path = datasource.connection_string
+        if is_excel_file(path):
+            return list_excel_sheets(path)
+        base = os.path.basename(path)
         display_name = base.split("__", 1)[-1] if "__" in base else base
         return [display_name]
 
@@ -238,14 +268,18 @@ def inspect_dataset(
     """
     Возвращает список полей (с типами) для будущего датасета.
 
-    Для CSV-подобных: query игнорируется, тип определяем через pandas.
-    Для SQL: смотри комментарий внутри ветки.
+    Для CSV: query игнорируется.
+    Для Excel: query содержит имя листа (т.к. в одном файле может быть
+    несколько листов, каждый — свой датасет).
+    Для SQL: см. ветку внутри.
     """
     if datasource.type in FILE_TYPES:
-        df = _read_file_to_df(
-            datasource.connection_string,
-            nrows=PREVIEW_ROW_LIMIT
-        )
+        path = datasource.connection_string
+        if is_excel_file(path):
+            sheet = query or None
+            df = _read_file_to_df(path, nrows=PREVIEW_ROW_LIMIT, sheet_name=sheet)
+        else:
+            df = _read_file_to_df(path, nrows=PREVIEW_ROW_LIMIT)
         return [
             {"name": col, "data_type": pandas_dtype_to_internal(df[col])}
             for col in df.columns
@@ -266,10 +300,6 @@ def inspect_dataset(
             ]
 
         if query:
-            # Читаем выборку через pandas — он корректно определит dtype'ы
-            # по фактическим значениям. cursor.description нельзя
-            # использовать для агрегаций — он возвращает type_code как
-            # число, и приведение к строке даёт мусор.
             base = query.rstrip(";").rstrip()
             wrapped = (
                 f"SELECT * FROM ({base}) AS sub LIMIT {TYPE_INSPECTION_SAMPLE}"
@@ -294,11 +324,16 @@ def read_dataset(
     """
     Читает данные датасета в pandas.DataFrame.
 
-    Для csv_link: при каждом вызове читаем файл свежим, что и обеспечивает
-    «живое» обновление данных при внешних правках файла.
+    Для csv: читаем файл целиком.
+    Для xlsx: query = имя листа, читаем именно этот лист.
+    Для SQL: query — SELECT-запрос или сгенерированное SELECT * FROM <table>.
     """
     if datasource.type in FILE_TYPES:
-        return _read_file_to_df(datasource.connection_string, nrows=limit)
+        path = datasource.connection_string
+        if is_excel_file(path):
+            sheet = query or None
+            return _read_file_to_df(path, nrows=limit, sheet_name=sheet)
+        return _read_file_to_df(path, nrows=limit)
 
     if datasource.type in ("postgres", "mysql"):
         engine = _build_sql_engine(datasource)

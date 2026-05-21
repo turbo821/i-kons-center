@@ -2,15 +2,15 @@
 REST API для работы с источниками данных.
 
 Маршруты:
-    GET    /api/datasources              — список
-    POST   /api/datasources               — создать SQL-источник
-    POST   /api/datasources/upload        — загрузить CSV/Excel
-    POST   /api/datasources/link          — создать «ссылку» на файл по пути
-    GET    /api/datasources/<id>          — получить один
-    PUT    /api/datasources/<id>          — обновить метаданные
-    DELETE /api/datasources/<id>          — удалить
-    POST   /api/datasources/<id>/test     — проверка подключения
-    GET    /api/datasources/<id>/tables   — список таблиц источника
+    GET    /api/datasources
+    POST   /api/datasources
+    POST   /api/datasources/upload
+    POST   /api/datasources/link
+    GET    /api/datasources/<id>
+    PUT    /api/datasources/<id>
+    DELETE /api/datasources/<id>
+    POST   /api/datasources/<id>/test
+    GET    /api/datasources/<id>/tables
     POST   /api/datasources/<id>/replace-file
     PUT    /api/datasources/<id>/connection
     PUT    /api/datasources/<id>/link-path
@@ -37,23 +37,22 @@ datasource_bp = Blueprint(
 EDITOR_ROLES = ("admin", "expert")
 
 
-def _auto_create_file_dataset(ds: DataSource, dataset_name: str) -> Dataset:
+def _add_dataset_for_file(
+    ds: DataSource,
+    name: str,
+    sheet_name: str | None,
+) -> Dataset:
     """
-    Создать датасет автоматически для файлового источника (csv / csv_link).
-
-    Для файла существует ровно один «логический» набор данных — содержимое
-    файла. Пользователю не нужно создавать его руками; он появляется сразу
-    при создании источника. Имя датасета можно изменить позже на странице
-    деталей источника.
-
-    Поля датасета определяются через инспекцию файла (pandas dtypes).
+    Создаёт один датасет для файлового источника + поля по инспекции.
+    Для xlsx sheet_name хранится в sql_query (он же используется как
+    «селектор» при чтении).
     """
-    fields_info = ds_service.inspect_dataset(ds, query=None)
+    fields_info = ds_service.inspect_dataset(ds, query=sheet_name)
 
     dataset = Dataset(
         datasource_id=ds.id,
-        name=dataset_name,
-        sql_query=None,
+        name=name,
+        sql_query=sheet_name,  # None для csv; имя листа для xlsx
     )
     db.session.add(dataset)
     db.session.flush()
@@ -68,13 +67,37 @@ def _auto_create_file_dataset(ds: DataSource, dataset_name: str) -> Dataset:
     return dataset
 
 
+def _auto_create_file_datasets(ds: DataSource, default_name: str) -> None:
+    """
+    Создаёт датасеты для файлового источника.
+
+    Логика:
+      - CSV → один датасет с именем default_name.
+      - XLSX → по датасету на каждый лист, имя = имя листа.
+        Если файл без листов (теоретически невозможно) — поднимаем ошибку.
+
+    Транзакция: вызывающий код решает, commit или rollback.
+    """
+    path = ds.connection_string
+
+    if ds_service.is_excel_file(path):
+        sheets = ds_service.list_excel_sheets(path)
+        if not sheets:
+            raise ValueError("В Excel-файле нет листов")
+
+        for sheet in sheets:
+            _add_dataset_for_file(ds, name=sheet, sheet_name=sheet)
+        return
+
+    # csv (и .csv-варианты)
+    _add_dataset_for_file(ds, name=default_name, sheet_name=None)
+
+
 def _default_dataset_name_from_path(path: str) -> str:
-    """Имя файла без uuid-префикса и без расширения."""
+    """Имя файла без uuid-префикса и расширения."""
     base = os.path.basename(path)
-    # Для uploaded-файлов снимаем uuid-префикс «hash__»
     if "__" in base:
         base = base.split("__", 1)[-1]
-    # Убираем расширение
     name, _ = os.path.splitext(base)
     return name or "Набор данных"
 
@@ -146,11 +169,12 @@ def create_sql_datasource():
 @datasource_bp.route("/upload", methods=["POST"])
 @role_required(*EDITOR_ROLES)
 def upload_file_datasource():
-    """multipart/form-data: file, name?, category_id?
+    """
+    multipart/form-data: file, name?, category_id?
 
-    После создания источника автоматически создаётся датасет с именем
-    файла (без расширения). Это связано с тем, что файловый источник
-    содержит ровно один набор данных, и руками его создавать смысла нет.
+    После создания источника:
+      - для CSV создаётся один датасет с именем файла без расширения;
+      - для XLSX создаётся по датасету на каждый лист, имя = имя листа.
     """
     if "file" not in request.files:
         return jsonify({"message": "Файл не передан (поле 'file')"}), 400
@@ -196,12 +220,10 @@ def upload_file_datasource():
     db.session.add(ds)
     db.session.flush()  # нужен id источника для FK на датасет
 
-    # Авто-создание датасета. Если инспекция вдруг упадёт (битый файл),
-    # откатываем всё.
     try:
-        _auto_create_file_dataset(
+        _auto_create_file_datasets(
             ds,
-            _default_dataset_name_from_path(saved_path),
+            default_name=_default_dataset_name_from_path(saved_path),
         )
     except (ValueError, OSError) as e:
         db.session.rollback()
@@ -214,15 +236,12 @@ def upload_file_datasource():
     return jsonify(ds.to_dict()), 201
 
 
-# ---------------------------------------------------------------------------
-# CSV/Excel ПО ССЫЛКЕ (без копирования файла)
-# ---------------------------------------------------------------------------
 @datasource_bp.route("/link", methods=["POST"])
 @role_required(*EDITOR_ROLES)
 def create_link_datasource():
     """
-    Создаёт источник типа csv_link и автоматически — один датасет под него.
-    Файл не копируется в uploads/; путь хранится в connection_string.
+    Создаёт источник csv_link + автоматически датасеты по содержимому
+    файла (один для CSV, по одному на лист для XLSX).
     """
     data = request.json or {}
 
@@ -234,7 +253,6 @@ def create_link_datasource():
     if not path:
         return jsonify({"message": "Укажите путь к файлу"}), 400
 
-    # Валидируем путь: существует, читается, расширение допустимо
     ok, msg = ds_service.validate_external_file_path(path)
     if not ok:
         return jsonify({"message": msg}), 400
@@ -258,9 +276,9 @@ def create_link_datasource():
     db.session.flush()
 
     try:
-        _auto_create_file_dataset(
+        _auto_create_file_datasets(
             ds,
-            _default_dataset_name_from_path(path),
+            default_name=_default_dataset_name_from_path(path),
         )
     except (ValueError, OSError) as e:
         db.session.rollback()
@@ -284,13 +302,16 @@ def get_datasource(ds_id):
 def delete_datasource(ds_id):
     ds = DataSource.query.get_or_404(ds_id)
 
-    if ds.datasets:
+    # Раньше тут была защита «нельзя удалить, если есть датасеты».
+    # Для файловых источников это бессмысленно: датасеты создаются
+    # автоматически и удаляются вместе с источником каскадом. Поэтому
+    # для файловых разрешаем удаление вместе со всеми датасетами.
+    # Для SQL — оставляем защиту (там пользователь сам управляет датасетами).
+    if ds.type not in ("csv", "csv_link") and ds.datasets:
         return jsonify({
             "message": "Нельзя удалить источник: есть связанные наборы данных"
         }), 409
 
-    # Физически удаляем только файлы, загруженные через /upload.
-    # Для csv_link файл принадлежит пользователю — удалять его нельзя.
     if ds.type == "csv":
         ds_service.remove_file_if_exists(ds.connection_string)
 
@@ -303,7 +324,6 @@ def delete_datasource(ds_id):
 @datasource_bp.route("/<int:ds_id>", methods=["PUT"])
 @role_required(*EDITOR_ROLES)
 def update_datasource(ds_id):
-    """Обновление метаданных (имя, категория)."""
     ds = DataSource.query.get_or_404(ds_id)
     data = request.json or {}
 
@@ -327,7 +347,14 @@ def update_datasource(ds_id):
 @datasource_bp.route("/<int:ds_id>/replace-file", methods=["POST"])
 @role_required(*EDITOR_ROLES)
 def replace_file(ds_id):
-    """Замена файла. Только для type='csv'. Для csv_link используйте link-path."""
+    """
+    Заменяет файл в источнике типа csv.
+
+    Совместимость проверяется так: каждый существующий датасет (он
+    привязан к листу, если xlsx) должен находиться в новом файле и иметь
+    все требуемые столбцы. Если у xlsx-датасета был лист «Q1», а в новом
+    файле его нет — обновление отклоняется.
+    """
     ds = DataSource.query.get_or_404(ds_id)
 
     if ds.type != "csv":
@@ -350,10 +377,6 @@ def replace_file(ds_id):
             "message": "Поддерживаются только файлы CSV, XLS, XLSX"
         }), 400
 
-    required_fields_by_ds = {
-        d.id: {f.name for f in d.fields} for d in ds.datasets
-    }
-
     try:
         new_path = ds_service.save_uploaded_file(file)
     except (OSError, ValueError) as e:
@@ -363,30 +386,14 @@ def replace_file(ds_id):
     ds.connection_string = new_path
 
     try:
-        import pandas as pd
-        new_df = (
-            pd.read_csv(new_path) if new_path.lower().endswith(".csv")
-            else pd.read_excel(new_path)
-        )
-        new_columns = set(new_df.columns)
-
-        problems = []
-        for d_id, required in required_fields_by_ds.items():
-            missing = required - new_columns
-            if missing:
-                problems.append(
-                    f"набор данных id={d_id} требует столбцы: "
-                    f"{', '.join(missing)}"
-                )
-
+        problems = _check_file_compat(ds, new_path)
         if problems:
             ds.connection_string = old_path
             ds_service.remove_file_if_exists(new_path)
             return jsonify({
                 "message": "Новый файл несовместим:\n" + "\n".join(problems)
             }), 400
-
-    except (ValueError, OSError, ImportError) as e:
+    except (ValueError, OSError) as e:
         ds.connection_string = old_path
         ds_service.remove_file_if_exists(new_path)
         return jsonify({"message": f"Не удалось прочитать файл: {e}"}), 400
@@ -397,20 +404,9 @@ def replace_file(ds_id):
     return jsonify({"message": "Файл обновлён", "datasource": ds.to_dict()})
 
 
-# ---------------------------------------------------------------------------
-# Обновление пути для csv_link
-# ---------------------------------------------------------------------------
 @datasource_bp.route("/<int:ds_id>/link-path", methods=["PUT"])
 @role_required(*EDITOR_ROLES)
 def update_link_path(ds_id):
-    """
-    Обновляет путь к файлу для источника типа csv_link.
-    Body: {"path": "/new/path/to/file.csv"}
-
-    Проверяем, что новый файл существует, читается и содержит все
-    столбцы, которые требуются существующими датасетами (аналогично
-    replace-file для csv).
-    """
     ds = DataSource.query.get_or_404(ds_id)
 
     if ds.type != "csv_link":
@@ -428,40 +424,63 @@ def update_link_path(ds_id):
     if not ok:
         return jsonify({"message": msg}), 400
 
-    # Проверяем совместимость с существующими датасетами по столбцам
-    required_fields_by_ds = {
-        d.id: {f.name for f in d.fields} for d in ds.datasets
-    }
     old_path = ds.connection_string
     ds.connection_string = new_path
 
     try:
-        import pandas as pd
-        new_df = (
-            pd.read_csv(new_path) if new_path.lower().endswith(".csv")
-            else pd.read_excel(new_path)
-        )
-        new_columns = set(new_df.columns)
-
-        problems = []
-        for d_id, required in required_fields_by_ds.items():
-            missing = required - new_columns
-            if missing:
-                problems.append(
-                    f"набор данных id={d_id} требует столбцы: "
-                    f"{', '.join(missing)}"
-                )
+        problems = _check_file_compat(ds, new_path)
         if problems:
             ds.connection_string = old_path
             return jsonify({
                 "message": "Файл несовместим:\n" + "\n".join(problems)
             }), 400
-    except (ValueError, OSError, ImportError) as e:
+    except (ValueError, OSError) as e:
         ds.connection_string = old_path
         return jsonify({"message": f"Не удалось прочитать файл: {e}"}), 400
 
     db.session.commit()
     return jsonify({"message": "Путь обновлён", "datasource": ds.to_dict()})
+
+
+def _check_file_compat(ds: DataSource, new_path: str) -> list[str]:
+    """
+    Проверяет, что в новом файле есть все нужные столбцы для каждого
+    существующего датасета источника. Возвращает список текстовых
+    описаний проблем (пустой = всё ок).
+
+    Для xlsx учитываем имя листа (хранится в dataset.sql_query).
+    """
+    import pandas as pd
+
+    problems: list[str] = []
+    is_xlsx = ds_service.is_excel_file(new_path)
+
+    available_sheets: set[str] = set()
+    if is_xlsx:
+        available_sheets = set(ds_service.list_excel_sheets(new_path))
+
+    for d in ds.datasets:
+        required = {f.name for f in d.fields}
+        if is_xlsx:
+            sheet = d.sql_query
+            if sheet and sheet not in available_sheets:
+                problems.append(
+                    f"в новом файле нет листа «{sheet}» "
+                    f"(требуется для набора данных «{d.name}»)"
+                )
+                continue
+            new_df = pd.read_excel(new_path, sheet_name=sheet)
+        else:
+            new_df = pd.read_csv(new_path)
+
+        missing = required - set(new_df.columns)
+        if missing:
+            problems.append(
+                f"в наборе данных «{d.name}» отсутствуют столбцы: "
+                f"{', '.join(sorted(missing))}"
+            )
+
+    return problems
 
 
 @datasource_bp.route("/<int:ds_id>/connection", methods=["PUT"])
