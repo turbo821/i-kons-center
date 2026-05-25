@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Users as UsersIcon,
   Shield,
@@ -19,6 +19,24 @@ import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
 import { useConfirm } from "../context/ConfirmContext";
 import Modal from "../components/Modal";
+import ListToolbar, { applySort, matchesSearch } from "../components/ListToolbar";
+
+
+const SORT_OPTIONS = [
+  { value: "created_desc", label: "Сначала новые" },
+  { value: "created_asc", label: "Сначала старые" },
+  { value: "username_asc", label: "По имени А→Я" },
+  { value: "username_desc", label: "По имени Я→А" },
+  { value: "email_asc", label: "По email А→Я" },
+];
+
+const SORT_MAP = {
+  created_desc: { field: "created_at", direction: "desc" },
+  created_asc: { field: "created_at", direction: "asc" },
+  username_asc: { field: "username", direction: "asc" },
+  username_desc: { field: "username", direction: "desc" },
+  email_asc: { field: "email", direction: "asc" },
+};
 
 
 export default function UsersPage() {
@@ -30,6 +48,11 @@ export default function UsersPage() {
   const [roles, setRoles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [editingUser, setEditingUser] = useState(null);
+
+  const [search, setSearch] = useState("");
+  const [sort, setSort] = useState("created_desc");
+  const [roleFilter, setRoleFilter] = useState(null);     // null = все роли
+  const [statusFilter, setStatusFilter] = useState(null);  // null = все статусы
 
   const load = async () => {
     setLoading(true);
@@ -51,6 +74,23 @@ export default function UsersPage() {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const filtered = useMemo(() => {
+    let result = users;
+
+    if (roleFilter) {
+      result = result.filter((u) => (u.roles || []).includes(roleFilter));
+    }
+    if (statusFilter) {
+      result = result.filter((u) => u.status === statusFilter);
+    }
+
+    result = result.filter((u) =>
+      matchesSearch(u, search, ["username", "email"])
+    );
+
+    return applySort(result, sort, SORT_MAP);
+  }, [users, roleFilter, statusFilter, search, sort]);
 
   const handleToggleStatus = async (user) => {
     const newStatus = user.status === "active" ? "blocked" : "active";
@@ -95,6 +135,27 @@ export default function UsersPage() {
     }
   };
 
+  // Счётчики для чипов
+  const roleCounts = useMemo(() => {
+    const counts = {};
+    for (const u of users) {
+      for (const r of u.roles || []) {
+        counts[r] = (counts[r] || 0) + 1;
+      }
+    }
+    return counts;
+  }, [users]);
+
+  const statusCounts = useMemo(() => {
+    let active = 0;
+    let blocked = 0;
+    for (const u of users) {
+      if (u.status === "blocked") blocked += 1;
+      else active += 1;
+    }
+    return { active, blocked };
+  }, [users]);
+
   return (
     <div className="space-y-6">
       <div>
@@ -102,16 +163,72 @@ export default function UsersPage() {
         <p className="text-slate-600">Только для администраторов системы</p>
       </div>
 
+      <ListToolbar
+        search={search}
+        onSearchChange={setSearch}
+        searchPlaceholder="Поиск по имени и email..."
+        sortValue={sort}
+        onSortChange={setSort}
+        sortOptions={SORT_OPTIONS}
+      />
+
+      {/* Фильтры: роли и статус */}
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs font-medium text-slate-400">Роль:</span>
+        <Chip active={roleFilter === null} onClick={() => setRoleFilter(null)}>
+          Все ({users.length})
+        </Chip>
+        {roles.map((r) => (
+          <Chip
+            key={r.id}
+            active={roleFilter === r.name}
+            onClick={() =>
+              setRoleFilter(roleFilter === r.name ? null : r.name)
+            }
+          >
+            {r.name} ({roleCounts[r.name] || 0})
+          </Chip>
+        ))}
+
+        <span className="ml-3 text-xs font-medium text-slate-400">Статус:</span>
+        <Chip
+          active={statusFilter === null}
+          onClick={() => setStatusFilter(null)}
+        >
+          Все
+        </Chip>
+        <Chip
+          active={statusFilter === "active"}
+          onClick={() =>
+            setStatusFilter(statusFilter === "active" ? null : "active")
+          }
+        >
+          Активные ({statusCounts.active})
+        </Chip>
+        <Chip
+          active={statusFilter === "blocked"}
+          onClick={() =>
+            setStatusFilter(statusFilter === "blocked" ? null : "blocked")
+          }
+        >
+          Заблокированные ({statusCounts.blocked})
+        </Chip>
+      </div>
+
       {loading && <p className="text-slate-500">Загрузка...</p>}
 
-      {!loading && users.length === 0 && (
+      {!loading && filtered.length === 0 && (
         <div className="rounded-2xl bg-white p-12 text-center shadow-sm">
           <UsersIcon className="mx-auto mb-4 text-slate-400" size={48} />
-          <p className="text-slate-600">Нет пользователей</p>
+          <p className="text-slate-600">
+            {users.length === 0
+              ? "Нет пользователей"
+              : "Ничего не найдено по заданным условиям"}
+          </p>
         </div>
       )}
 
-      {users.length > 0 && (
+      {filtered.length > 0 && (
         <div className="overflow-hidden rounded-2xl bg-white shadow-sm">
           <table className="w-full text-sm">
             <thead className="bg-slate-50">
@@ -125,7 +242,7 @@ export default function UsersPage() {
               </tr>
             </thead>
             <tbody>
-              {users.map((u) => {
+              {filtered.map((u) => {
                 const isMe = u.id === Number(currentUser.id);
                 return (
                   <tr
@@ -211,6 +328,22 @@ export default function UsersPage() {
         onSaved={load}
       />
     </div>
+  );
+}
+
+
+function Chip({ active, onClick, children }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`rounded-full px-3 py-1 text-xs font-medium transition ${
+        active
+          ? "bg-slate-900 text-white"
+          : "bg-white text-slate-700 hover:bg-slate-100 border border-slate-200"
+      }`}
+    >
+      {children}
+    </button>
   );
 }
 
