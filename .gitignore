@@ -39,7 +39,6 @@ docker-compose.override.yml
 
 # Environment variables
 .env
-.env.*
 
 # User-specific files
 *.rsuser
