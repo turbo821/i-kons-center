@@ -26,11 +26,13 @@ from app.models import (
     DatasetField,
     DashboardWidget,
 )
-from app.auth.decorators import role_required
+from app.auth.decorators import role_required, get_current_user_id
 from app.services.widget_data_service import (
     aggregate_widget_data,
     FILTER_OPERATORS,
 )
+from app.services import access_service as access
+from app.services.access_service import ENTITY_WIDGET
 
 
 widget_bp = Blueprint("widgets", __name__, url_prefix="/api/widgets")
@@ -147,6 +149,8 @@ def list_widgets():
     dashboard_id = request.args.get("dashboard_id", type=int)
     category_id = request.args.get("category_id", type=int)
 
+    user_id = get_current_user_id()
+
     if dashboard_id is not None:
         # Виджеты, размещённые на дашборде (через DashboardWidget)
         items = (
@@ -155,10 +159,14 @@ def list_widgets():
             .filter(DashboardWidget.dashboard_id == dashboard_id)
             .all()
         )
+        # Дополнительно фильтруем по доступным категориям виджетов
+        viewable = access.viewable_category_ids(user_id, ENTITY_WIDGET)
+        items = [w for w in items if w.category_id in viewable]
     else:
         q = db.session.query(Widget)
         if category_id is not None:
             q = q.filter_by(category_id=category_id)
+        q = access.filter_query_by_access(q, Widget, user_id, ENTITY_WIDGET)
         items = q.order_by(Widget.id.desc()).all()
 
     return jsonify([w.to_dict() for w in items])
@@ -206,6 +214,11 @@ def create_widget():
             "message": f"Категория id={category_id} не найдена"
         }), 400
 
+    # Создавать виджет можно только в категории с правом редактирования
+    denied = access.check_edit(get_current_user_id(), ENTITY_WIDGET, category_id)
+    if denied:
+        return jsonify(denied[0]), denied[1]
+
     metrics, err = _resolve_metrics(data.get("metric_ids") or [], dataset_id)
     if err:
         return jsonify({"message": err}), 400
@@ -246,6 +259,9 @@ def get_widget(widget_id):
     widget = db.session.get(Widget, widget_id)
     if widget is None:
         return jsonify({"message": "Не найдено"}), 404
+    denied = access.check_view(get_current_user_id(), ENTITY_WIDGET, widget.category_id)
+    if denied:
+        return jsonify(denied[0]), denied[1]
     return jsonify(widget.to_dict(include_config=True))
 
 
@@ -258,6 +274,11 @@ def update_widget(widget_id):
     widget = db.session.get(Widget, widget_id)
     if widget is None:
         return jsonify({"message": "Не найдено"}), 404
+
+    user_id = get_current_user_id()
+    denied = access.check_edit(user_id, ENTITY_WIDGET, widget.category_id)
+    if denied:
+        return jsonify(denied[0]), denied[1]
 
     data = request.json or {}
 
@@ -284,6 +305,9 @@ def update_widget(widget_id):
             return jsonify({
                 "message": f"Категория id={cat} не найдена"
             }), 400
+        denied_target = access.check_edit(user_id, ENTITY_WIDGET, cat)
+        if denied_target:
+            return jsonify(denied_target[0]), denied_target[1]
         widget.category_id = cat
 
     # Все resolve-проверки идут против актуального dataset_id виджета.
@@ -321,6 +345,10 @@ def delete_widget(widget_id):
     if widget is None:
         return jsonify({"message": "Не найдено"}), 404
 
+    denied = access.check_edit(get_current_user_id(), ENTITY_WIDGET, widget.category_id)
+    if denied:
+        return jsonify(denied[0]), denied[1]
+
     db.session.delete(widget)
     db.session.commit()
     return jsonify({"message": "Удалено"})
@@ -335,6 +363,10 @@ def widget_data(widget_id):
     widget = db.session.get(Widget, widget_id)
     if widget is None:
         return jsonify({"message": "Не найдено"}), 404
+
+    denied = access.check_view(get_current_user_id(), ENTITY_WIDGET, widget.category_id)
+    if denied:
+        return jsonify(denied[0]), denied[1]
 
     try:
         result = aggregate_widget_data(widget)

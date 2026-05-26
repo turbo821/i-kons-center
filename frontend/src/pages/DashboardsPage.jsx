@@ -10,6 +10,7 @@ import {
 } from "../api/dashboardApi";
 
 import { useAuth } from "../context/AuthContext";
+import { useAccess } from "../context/AccessContext";
 import { useToast } from "../context/ToastContext";
 import { useConfirm } from "../context/ConfirmContext";
 import Modal from "../components/Modal";
@@ -36,9 +37,10 @@ const SORT_MAP = {
 
 export default function DashboardsPage() {
   const { user } = useAuth();
+  const { canEdit, canCreateAny, isAdmin } = useAccess();
   const toast = useToast();
   const confirm = useConfirm();
-  const canEdit = user?.roles?.some((r) => ["admin", "expert"].includes(r));
+  const canCreate = canCreateAny("dashboard");
 
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -137,23 +139,27 @@ export default function DashboardsPage() {
           <p className="text-slate-600">Аналитические панели</p>
         </div>
 
-        {canEdit && (
+        {(isAdmin || canCreate) && (
           <div className="flex gap-3">
-            <button
-              onClick={() => setCategoriesOpen(true)}
-              className="flex items-center gap-2 rounded-xl bg-slate-100 px-4 py-2 text-sm font-medium hover:bg-slate-200"
-            >
-              <FolderTree size={16} />
-              Категории
-            </button>
+            {isAdmin && (
+              <button
+                onClick={() => setCategoriesOpen(true)}
+                className="flex items-center gap-2 rounded-xl bg-slate-100 px-4 py-2 text-sm font-medium hover:bg-slate-200"
+              >
+                <FolderTree size={16} />
+                Категории
+              </button>
+            )}
 
-            <button
-              onClick={() => setCreateOpen(true)}
-              className="flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
-            >
-              <Plus size={18} />
-              Создать дашборд
-            </button>
+            {canCreate && (
+              <button
+                onClick={() => setCreateOpen(true)}
+                className="flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
+              >
+                <Plus size={18} />
+                Создать дашборд
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -202,7 +208,7 @@ export default function DashboardsPage() {
               }`}
             >
               {/* Task 6: индикатор закрепления + кнопка переключения */}
-              {canEdit && (
+              {canEdit("dashboard", item.category_id) && (
                 <button
                   onClick={(e) => handleTogglePin(item, e)}
                   title={item.is_pinned ? "Открепить" : "Закрепить на главной"}
@@ -241,7 +247,7 @@ export default function DashboardsPage() {
                 <span>
                   {new Date(item.created_at).toLocaleDateString("ru-RU")}
                 </span>
-                {canEdit && (
+                {canEdit("dashboard", item.category_id) && (
                   <button
                     onClick={() => handleDelete(item)}
                     className="rounded-lg p-1.5 text-red-600 hover:bg-red-50"

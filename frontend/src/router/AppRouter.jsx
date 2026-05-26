@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import LoginPage from "../pages/LoginPage";
 import RegisterPage from "../pages/RegisterPage";
 import UsersPage from "../pages/UsersPage";
+import RoleGroupsPage from "../pages/RoleGroupsPage";
 import HomePage from "../pages/HomePage";
 import DataSourcesPage from "../pages/DataSourcesPage";
 import DataSourceDetailPage from "../pages/DataSourceDetailPage";
@@ -118,6 +119,17 @@ export default function AppRouter() {
               <ProtectedRoute>
                 <RoleRoute roles={["admin"]}>
                   <UsersPage />
+                </RoleRoute>
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/admin/role-groups"
+            element={
+              <ProtectedRoute>
+                <RoleRoute roles={["admin"]}>
+                  <RoleGroupsPage />
                 </RoleRoute>
               </ProtectedRoute>
             }

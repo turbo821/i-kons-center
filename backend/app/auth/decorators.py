@@ -38,3 +38,20 @@ def role_required(*role_names):
         return decorator
 
     return wrapper
+
+
+def admin_required(fn):
+    """
+    Сокращение для @role_required("admin").
+
+    Используется для операций администрирования: управление пользователями,
+    ролевыми группами, назначение глобальных ролей.
+    """
+    return role_required("admin")(fn)
+
+
+def get_current_user_id():
+    """Возвращает int id текущего пользователя из JWT."""
+    from flask_jwt_extended import get_jwt_identity
+    identity = get_jwt_identity()
+    return int(identity) if identity is not None else None

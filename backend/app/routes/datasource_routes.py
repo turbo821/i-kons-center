@@ -24,8 +24,10 @@ from flask_jwt_extended import jwt_required, get_jwt_identity
 
 from app.database.db import db
 from app.models import DataSource, DataSourceCategory, Dataset, DatasetField
-from app.auth.decorators import role_required
+from app.auth.decorators import role_required, get_current_user_id
 from app.services import datasource_service as ds_service
+from app.services import access_service as access
+from app.services.access_service import ENTITY_DATASOURCE
 
 
 datasource_bp = Blueprint(
@@ -105,10 +107,15 @@ def _default_dataset_name_from_path(path: str) -> str:
 @datasource_bp.route("", methods=["GET"])
 @jwt_required()
 def list_datasources():
+    user_id = get_current_user_id()
     q = DataSource.query
     category_id = request.args.get("category_id", type=int)
     if category_id is not None:
         q = q.filter_by(category_id=category_id)
+
+    # Ограничиваем выборку категориями, доступными пользователю
+    q = access.filter_query_by_access(q, DataSource, user_id, ENTITY_DATASOURCE)
+
     items = q.order_by(DataSource.created_at.desc()).all()
     return jsonify([d.to_dict() for d in items])
 
@@ -135,6 +142,11 @@ def create_sql_datasource():
         return jsonify({
             "message": f"Категория id={category_id} не найдена"
         }), 400
+
+    # Создавать источник можно только в категории с правом редактирования
+    denied = access.check_edit(get_current_user_id(), ENTITY_DATASOURCE, category_id)
+    if denied:
+        return jsonify(denied[0]), denied[1]
 
     connection_params = {
         "host": data["host"],
@@ -202,6 +214,11 @@ def upload_file_datasource():
             "message": f"Категория id={category_id} не найдена"
         }), 400
 
+    denied = access.check_edit(get_current_user_id(), ENTITY_DATASOURCE, category_id)
+    if denied:
+        ds_service.remove_file_if_exists(saved_path)
+        return jsonify(denied[0]), denied[1]
+
     ds = DataSource(
         name=request.form.get("name") or file.filename,
         type="csv",
@@ -263,6 +280,10 @@ def create_link_datasource():
             "message": f"Категория id={category_id} не найдена"
         }), 400
 
+    denied = access.check_edit(get_current_user_id(), ENTITY_DATASOURCE, category_id)
+    if denied:
+        return jsonify(denied[0]), denied[1]
+
     user_id = int(get_jwt_identity())
 
     ds = DataSource(
@@ -290,10 +311,25 @@ def create_link_datasource():
     return jsonify(ds.to_dict()), 201
 
 
+def _require_ds_view(ds):
+    """Проверка просмотра источника. Возвращает None или (json, code)."""
+    user_id = get_current_user_id()
+    return access.check_view(user_id, ENTITY_DATASOURCE, ds.category_id)
+
+
+def _require_ds_edit(ds):
+    """Проверка редактирования источника. Возвращает None или (json, code)."""
+    user_id = get_current_user_id()
+    return access.check_edit(user_id, ENTITY_DATASOURCE, ds.category_id)
+
+
 @datasource_bp.route("/<int:ds_id>", methods=["GET"])
 @jwt_required()
 def get_datasource(ds_id):
     ds = DataSource.query.get_or_404(ds_id)
+    denied = _require_ds_view(ds)
+    if denied:
+        return jsonify(denied[0]), denied[1]
     return jsonify(ds.to_dict())
 
 
@@ -301,6 +337,9 @@ def get_datasource(ds_id):
 @role_required(*EDITOR_ROLES)
 def delete_datasource(ds_id):
     ds = DataSource.query.get_or_404(ds_id)
+    denied = _require_ds_edit(ds)
+    if denied:
+        return jsonify(denied[0]), denied[1]
 
     # Раньше тут была защита «нельзя удалить, если есть датасеты».
     # Для файловых источников это бессмысленно: датасеты создаются
@@ -325,6 +364,10 @@ def delete_datasource(ds_id):
 @role_required(*EDITOR_ROLES)
 def update_datasource(ds_id):
     ds = DataSource.query.get_or_404(ds_id)
+    denied = _require_ds_edit(ds)
+    if denied:
+        return jsonify(denied[0]), denied[1]
+
     data = request.json or {}
 
     if "name" in data:
@@ -338,6 +381,12 @@ def update_datasource(ds_id):
             return jsonify({
                 "message": f"Категория id={new_cat} не найдена"
             }), 400
+        # Перемещать источник можно только в категорию, где есть право
+        # редактирования
+        user_id = get_current_user_id()
+        denied_target = access.check_edit(user_id, ENTITY_DATASOURCE, new_cat)
+        if denied_target:
+            return jsonify(denied_target[0]), denied_target[1]
         ds.category_id = new_cat
 
     db.session.commit()
@@ -356,6 +405,10 @@ def replace_file(ds_id):
     файле его нет — обновление отклоняется.
     """
     ds = DataSource.query.get_or_404(ds_id)
+
+    denied = _require_ds_edit(ds)
+    if denied:
+        return jsonify(denied[0]), denied[1]
 
     if ds.type != "csv":
         return jsonify({
@@ -408,6 +461,10 @@ def replace_file(ds_id):
 @role_required(*EDITOR_ROLES)
 def update_link_path(ds_id):
     ds = DataSource.query.get_or_404(ds_id)
+
+    denied = _require_ds_edit(ds)
+    if denied:
+        return jsonify(denied[0]), denied[1]
 
     if ds.type != "csv_link":
         return jsonify({
@@ -488,6 +545,10 @@ def _check_file_compat(ds: DataSource, new_path: str) -> list[str]:
 def update_connection(ds_id):
     ds = DataSource.query.get_or_404(ds_id)
 
+    denied = _require_ds_edit(ds)
+    if denied:
+        return jsonify(denied[0]), denied[1]
+
     if ds.type not in ("postgres", "mysql"):
         return jsonify({
             "message": "Обновление соединения доступно только для SQL-источников"
@@ -542,6 +603,9 @@ def update_connection(ds_id):
 @jwt_required()
 def test_connection(ds_id):
     ds = DataSource.query.get_or_404(ds_id)
+    denied = _require_ds_view(ds)
+    if denied:
+        return jsonify(denied[0]), denied[1]
     ok, msg = ds_service.test_connection(ds)
     return jsonify({"ok": ok, "message": msg})
 
@@ -550,6 +614,9 @@ def test_connection(ds_id):
 @jwt_required()
 def list_tables(ds_id):
     ds = DataSource.query.get_or_404(ds_id)
+    denied = _require_ds_view(ds)
+    if denied:
+        return jsonify(denied[0]), denied[1]
     try:
         tables = ds_service.list_tables(ds)
     except (ValueError, OSError) as e:

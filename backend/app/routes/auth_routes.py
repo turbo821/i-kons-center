@@ -94,12 +94,62 @@ def me():
 
     # Также возвращаем username — для отображения в Header
     user = db.session.get(User, int(user_id))
+    groups = []
+    if user:
+        groups = [
+            {
+                "group_id": m.group_id,
+                "group_name": m.group.name if m.group else None,
+                "group_role": m.group_role,
+            }
+            for m in user.group_memberships
+        ]
     return jsonify({
         "id": user_id,
         "username": user.username if user else None,
         "email": claims["email"],
         "roles": claims["roles"],
+        "groups": groups,
         "created_at": user.created_at.isoformat() if user and user.created_at else None,
+    })
+
+
+@auth_bp.route("/me/access", methods=["GET"])
+@jwt_required()
+def my_access():
+    """
+    Карта эффективного доступа текущего пользователя — нужна фронту, чтобы
+    решать, какие категории показывать и где разрешать редактирование.
+
+    Формат:
+    {
+      "is_admin": true,
+      "access": {
+        "datasource": [{"category_id": 3, "level": "edit"},
+                       {"category_id": null, "level": "view"}],
+        "widget":     [...],
+        "dashboard":  [...],
+        "kpi":        [...]
+      }
+    }
+    """
+    from app.services.access_service import build_access_map, is_global_admin
+
+    user_id = int(get_jwt_identity())
+    claims = get_jwt()
+
+    access_map = build_access_map(user_id)
+    serialized = {
+        etype: [
+            {"category_id": cat_id, "level": level}
+            for cat_id, level in cats.items()
+        ]
+        for etype, cats in access_map.items()
+    }
+
+    return jsonify({
+        "is_admin": is_global_admin(claims.get("roles", [])),
+        "access": serialized,
     })
 
 

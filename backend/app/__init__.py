@@ -18,6 +18,7 @@ from app.routes.dashboard_routes import dashboard_bp
 from app.routes.kpi_routes import kpi_bp
 from app.routes.user_routes import user_bp
 from app.routes.stats_routes import stats_bp
+from app.routes.role_group_routes import role_group_bp
 
 from app.routes.category_routes import (
     datasource_category_bp,
@@ -50,6 +51,7 @@ def create_app():
     app.register_blueprint(kpi_bp)
     app.register_blueprint(user_bp)
     app.register_blueprint(stats_bp)
+    app.register_blueprint(role_group_bp)
 
     app.register_blueprint(datasource_category_bp)
     app.register_blueprint(widget_category_bp)

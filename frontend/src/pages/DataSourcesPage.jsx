@@ -24,6 +24,7 @@ import {
 import { datasourceCategoryApi } from "../api/categoryApi";
 
 import { useAuth } from "../context/AuthContext";
+import { useAccess } from "../context/AccessContext";
 import { useToast } from "../context/ToastContext";
 import { useConfirm } from "../context/ConfirmContext";
 import Modal from "../components/Modal";
@@ -66,11 +67,10 @@ const SORT_MAP = {
 
 export default function DataSourcesPage() {
   const { user } = useAuth();
+  const { canEdit, canCreateAny, isAdmin } = useAccess();
   const toast = useToast();
   const confirm = useConfirm();
-  const canEdit = user?.roles?.some((r) =>
-    ["admin", "expert"].includes(r)
-  );
+  const canCreate = canCreateAny("datasource");
 
   const [items, setItems] = useState([]);
   const [categories, setCategories] = useState([]);
@@ -175,29 +175,35 @@ export default function DataSourcesPage() {
           </p>
         </div>
 
-        {canEdit && (
+        {(isAdmin || canCreate) && (
           <div className="flex gap-3">
-            <button
-              onClick={() => setCategoriesOpen(true)}
-              className="flex items-center gap-2 rounded-xl bg-slate-100 px-4 py-2 text-sm font-medium hover:bg-slate-200"
-            >
-              <FolderTree size={16} />
-              Категории
-            </button>
-            <button
-              onClick={() => setUploadOpen(true)}
-              className="flex items-center gap-2 rounded-xl bg-slate-100 px-4 py-2 text-sm font-medium hover:bg-slate-200"
-            >
-              <Upload size={18} />
-              Загрузить файл
-            </button>
-            <button
-              onClick={() => setSqlOpen(true)}
-              className="flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
-            >
-              <Plus size={18} />
-              Подключить БД
-            </button>
+            {isAdmin && (
+              <button
+                onClick={() => setCategoriesOpen(true)}
+                className="flex items-center gap-2 rounded-xl bg-slate-100 px-4 py-2 text-sm font-medium hover:bg-slate-200"
+              >
+                <FolderTree size={16} />
+                Категории
+              </button>
+            )}
+            {canCreate && (
+              <>
+                <button
+                  onClick={() => setUploadOpen(true)}
+                  className="flex items-center gap-2 rounded-xl bg-slate-100 px-4 py-2 text-sm font-medium hover:bg-slate-200"
+                >
+                  <Upload size={18} />
+                  Загрузить файл
+                </button>
+                <button
+                  onClick={() => setSqlOpen(true)}
+                  className="flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
+                >
+                  <Plus size={18} />
+                  Подключить БД
+                </button>
+              </>
+            )}
           </div>
         )}
       </div>
@@ -324,7 +330,7 @@ export default function DataSourcesPage() {
                     Проверить
                   </button>
 
-                  {canEdit && (
+                  {canEdit("datasource", item.category_id) && (
                     <button
                       onClick={() => handleDelete(item)}
                       className="ml-auto flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50"

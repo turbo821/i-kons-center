@@ -4,6 +4,10 @@ from app.models.role import Role
 from app.models.user_role import UserRole
 from app.models.user import User
 
+from app.models.role_group import RoleGroup
+from app.models.user_group_membership import UserGroupMembership
+from app.models.group_category_access import GroupCategoryAccess
+
 from app.models.datasource_category import DataSourceCategory
 from app.models.data_source import DataSource
 from app.models.dataset import Dataset, DatasetField
@@ -27,6 +31,7 @@ from app.models.dashboard_text import DashboardText
 
 __all__ = [
     "Role", "UserRole", "User",
+    "RoleGroup", "UserGroupMembership", "GroupCategoryAccess",
     "DataSource", "Dataset", "DatasetField",
     "Metric", "WidgetMetric",
     "Dimension", "WidgetDimension",

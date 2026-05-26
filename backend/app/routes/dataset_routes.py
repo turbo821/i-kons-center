@@ -14,8 +14,10 @@ from flask_jwt_extended import jwt_required
 
 from app.database.db import db
 from app.models import DataSource, Dataset, DatasetField
-from app.auth.decorators import role_required
+from app.auth.decorators import role_required, get_current_user_id
 from app.services import datasource_service as ds_service
+from app.services import access_service as access
+from app.services.access_service import ENTITY_DATASOURCE
 
 
 dataset_bp = Blueprint("datasets", __name__, url_prefix="/api/datasets")
@@ -58,6 +60,22 @@ def list_datasets():
     if ds_id:
         q = q.filter_by(datasource_id=ds_id)
 
+    # Оставляем только датасеты, чьи источники в доступных категориях.
+    # Фильтруем через JOIN на data_sources по их category_id.
+    user_id = get_current_user_id()
+    viewable = access.viewable_category_ids(user_id, ENTITY_DATASOURCE)
+    if not viewable:
+        return jsonify([])
+
+    q = q.join(DataSource, Dataset.datasource_id == DataSource.id)
+    conditions = []
+    real_ids = [c for c in viewable if c is not None]
+    if real_ids:
+        conditions.append(DataSource.category_id.in_(real_ids))
+    if None in viewable:
+        conditions.append(DataSource.category_id.is_(None))
+    q = q.filter(db.or_(*conditions))
+
     items = q.order_by(Dataset.created_at.desc()).all()
     return jsonify([d.to_dict() for d in items])
 
@@ -91,6 +109,11 @@ def create_dataset():
     ds = db.session.get(DataSource, data["datasource_id"])
     if ds is None:
         return jsonify({"message": "Источник данных не найден"}), 404
+
+    # Создавать датасет можно только в источнике, доступном на редактирование
+    denied = access.check_edit(get_current_user_id(), ENTITY_DATASOURCE, ds.category_id)
+    if denied:
+        return jsonify(denied[0]), denied[1]
 
     if ds.type in FILE_LIKE_TYPES:
         return jsonify({
@@ -152,6 +175,9 @@ def get_dataset(dataset_id):
     dataset = db.session.get(Dataset, dataset_id)
     if dataset is None:
         return jsonify({"message": "Не найдено"}), 404
+    denied = access.check_dataset_view(get_current_user_id(), dataset)
+    if denied:
+        return jsonify(denied[0]), denied[1]
     return jsonify(dataset.to_dict(include_fields=True))
 
 
@@ -164,6 +190,10 @@ def delete_dataset(dataset_id):
     dataset = db.session.get(Dataset, dataset_id)
     if dataset is None:
         return jsonify({"message": "Не найдено"}), 404
+
+    denied = access.check_dataset_edit(get_current_user_id(), dataset)
+    if denied:
+        return jsonify(denied[0]), denied[1]
 
     # Защита: для файловых источников удаление через API запрещено.
     # Удалить датасет можно только удалив сам источник целиком.
@@ -194,6 +224,10 @@ def preview_dataset(dataset_id):
     dataset = db.session.get(Dataset, dataset_id)
     if dataset is None:
         return jsonify({"message": "Не найдено"}), 404
+
+    denied = access.check_dataset_view(get_current_user_id(), dataset)
+    if denied:
+        return jsonify(denied[0]), denied[1]
 
     limit = request.args.get("limit", default=50, type=int)
     limit = max(1, min(limit, 500))
@@ -226,6 +260,10 @@ def refresh_dataset_fields(dataset_id):
     if dataset is None:
         return jsonify({"message": "Не найдено"}), 404
 
+    denied = access.check_dataset_edit(get_current_user_id(), dataset)
+    if denied:
+        return jsonify(denied[0]), denied[1]
+
     try:
         fields_info = ds_service.inspect_dataset(
             dataset.datasource,
@@ -253,6 +291,10 @@ def update_dataset(ds_id):
     dataset = db.session.get(Dataset, ds_id)
     if dataset is None:
         return jsonify({"message": "Не найдено"}), 404
+
+    denied = access.check_dataset_edit(get_current_user_id(), dataset)
+    if denied:
+        return jsonify(denied[0]), denied[1]
 
     data = request.json or {}
 

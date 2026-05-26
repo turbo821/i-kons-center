@@ -12,9 +12,11 @@ from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required
 
 from app.database.db import db
-from app.models import Metric, DatasetField
-from app.auth.decorators import role_required
+from app.models import Metric, DatasetField, Dataset
+from app.auth.decorators import role_required, get_current_user_id
 from app.services.widget_data_service import AGGREGATION_FUNCS
+from app.services import access_service as access
+from app.services.access_service import ENTITY_DATASOURCE
 
 
 metric_bp = Blueprint("metrics", __name__, url_prefix="/api/metrics")
@@ -61,6 +63,15 @@ def list_metrics():
         q = q.join(DatasetField).filter(DatasetField.dataset_id == dataset_id)
 
     items = q.all()
+
+    # Оставляем только метрики, источник которых доступен пользователю
+    user_id = get_current_user_id()
+    viewable = access.viewable_category_ids(user_id, ENTITY_DATASOURCE)
+    items = [
+        m for m in items
+        if m.field and m.field.dataset and m.field.dataset.datasource
+        and m.field.dataset.datasource.category_id in viewable
+    ]
     return jsonify([m.to_dict() for m in items])
 
 
@@ -90,6 +101,10 @@ def create_metric():
     field = db.session.get(DatasetField, data["field_id"])
     if not field:
         return jsonify({"message": "Поле не найдено"}), 404
+
+    denied = access.check_field_edit(get_current_user_id(), field)
+    if denied:
+        return jsonify(denied[0]), denied[1]
 
     err = _validate_aggregation(data["aggregation_type"], field)
     if err:
@@ -130,6 +145,11 @@ def update_metric(metric_id):
     if metric is None:
         return jsonify({"message": "Не найдено"}), 404
 
+    # Редактировать метрику можно, только если есть право на её текущее поле
+    denied = access.check_field_edit(get_current_user_id(), metric.field)
+    if denied:
+        return jsonify(denied[0]), denied[1]
+
     data = request.json or {}
 
     # field_id: проверяем существование и совместимость с агрегацией.
@@ -139,6 +159,9 @@ def update_metric(metric_id):
         new_field = db.session.get(DatasetField, data["field_id"])
         if not new_field:
             return jsonify({"message": "Поле не найдено"}), 404
+        denied_target = access.check_field_edit(get_current_user_id(), new_field)
+        if denied_target:
+            return jsonify(denied_target[0]), denied_target[1]
 
     new_agg = data.get("aggregation_type", metric.aggregation_type)
     err = _validate_aggregation(new_agg, new_field)
@@ -167,6 +190,10 @@ def delete_metric(metric_id):
     metric = db.session.get(Metric, metric_id)
     if metric is None:
         return jsonify({"message": "Не найдено"}), 404
+
+    denied = access.check_field_edit(get_current_user_id(), metric.field)
+    if denied:
+        return jsonify(denied[0]), denied[1]
 
     if metric.widgets:
         return jsonify({

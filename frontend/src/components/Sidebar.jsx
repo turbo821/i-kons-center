@@ -8,6 +8,7 @@ import {
   PieChart,
   User as UserIcon,
   Home,
+  Layers,
 } from "lucide-react";
 
 import { Link, useLocation } from "react-router-dom";
@@ -38,6 +39,7 @@ export default function Sidebar({ collapsed, setCollapsed }) {
   // Админский раздел
   const adminItems = [
     { title: "Пользователи", icon: Users, path: "/admin/users" },
+    { title: "Ролевые группы", icon: Layers, path: "/admin/role-groups" },
   ];
 
   const isActive = (path) => {

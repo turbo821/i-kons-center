@@ -13,7 +13,9 @@ from flask_jwt_extended import jwt_required
 
 from app.database.db import db
 from app.models import Dimension, DatasetField
-from app.auth.decorators import role_required
+from app.auth.decorators import role_required, get_current_user_id
+from app.services import access_service as access
+from app.services.access_service import ENTITY_DATASOURCE
 
 
 dimension_bp = Blueprint("dimensions", __name__, url_prefix="/api/dimensions")
@@ -31,6 +33,14 @@ def list_dimensions():
         q = q.join(DatasetField).filter(DatasetField.dataset_id == dataset_id)
 
     items = q.all()
+
+    # Оставляем только измерения, источник которых доступен пользователю
+    viewable = access.viewable_category_ids(get_current_user_id(), ENTITY_DATASOURCE)
+    items = [
+        d for d in items
+        if d.field and d.field.dataset and d.field.dataset.datasource
+        and d.field.dataset.datasource.category_id in viewable
+    ]
     return jsonify([d.to_dict() for d in items])
 
 
@@ -56,6 +66,10 @@ def create_dimension():
     field = db.session.get(DatasetField, data["field_id"])
     if not field:
         return jsonify({"message": "Поле не найдено"}), 404
+
+    denied = access.check_field_edit(get_current_user_id(), field)
+    if denied:
+        return jsonify(denied[0]), denied[1]
 
     existing = db.session.query(Dimension).filter_by(
         field_id=data["field_id"]
@@ -85,12 +99,19 @@ def update_dimension(dim_id):
     if dim is None:
         return jsonify({"message": "Не найдено"}), 404
 
+    denied = access.check_field_edit(get_current_user_id(), dim.field)
+    if denied:
+        return jsonify(denied[0]), denied[1]
+
     data = request.json or {}
 
     if "field_id" in data and data["field_id"] is not None:
         new_field = db.session.get(DatasetField, data["field_id"])
         if not new_field:
             return jsonify({"message": "Поле не найдено"}), 404
+        denied_target = access.check_field_edit(get_current_user_id(), new_field)
+        if denied_target:
+            return jsonify(denied_target[0]), denied_target[1]
         dim.field_id = data["field_id"]
 
     if "name" in data:
@@ -109,6 +130,10 @@ def delete_dimension(dim_id):
     dim = db.session.get(Dimension, dim_id)
     if dim is None:
         return jsonify({"message": "Не найдено"}), 404
+
+    denied = access.check_field_edit(get_current_user_id(), dim.field)
+    if denied:
+        return jsonify(denied[0]), denied[1]
 
     if dim.widgets:
         return jsonify({

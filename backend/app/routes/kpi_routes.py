@@ -15,8 +15,10 @@ from flask_jwt_extended import jwt_required
 
 from app.database.db import db
 from app.models import KPI, KPICategory, Metric
-from app.auth.decorators import role_required
+from app.auth.decorators import role_required, get_current_user_id
 from app.services.kpi_service import calculate_kpi_value
+from app.services import access_service as access
+from app.services.access_service import ENTITY_KPI
 
 
 kpi_bp = Blueprint("kpis", __name__, url_prefix="/api/kpis")
@@ -59,6 +61,9 @@ def list_kpis():
     if category_id:
         q = q.filter_by(category_id=category_id)
 
+    # Ограничиваем категориями, доступными пользователю
+    q = access.filter_query_by_access(q, KPI, get_current_user_id(), ENTITY_KPI)
+
     items = q.order_by(KPI.created_at.desc()).all()
     return jsonify([k.to_dict() for k in items])
 
@@ -86,6 +91,11 @@ def create_kpi():
     if err:
         return jsonify({"message": err}), 400
 
+    # Создавать KPI можно только в категории с правом редактирования
+    denied = access.check_edit(get_current_user_id(), ENTITY_KPI, data.get("category_id"))
+    if denied:
+        return jsonify(denied[0]), denied[1]
+
     kpi = KPI(
         name=data["name"],
         description=data.get("description"),
@@ -109,6 +119,9 @@ def get_kpi(kpi_id):
     kpi = db.session.get(KPI, kpi_id)
     if kpi is None:
         return jsonify({"message": "Не найдено"}), 404
+    denied = access.check_view(get_current_user_id(), ENTITY_KPI, kpi.category_id)
+    if denied:
+        return jsonify(denied[0]), denied[1]
     return jsonify(kpi.to_dict(include_metric=True))
 
 
@@ -119,11 +132,22 @@ def update_kpi(kpi_id):
     if kpi is None:
         return jsonify({"message": "Не найдено"}), 404
 
+    user_id = get_current_user_id()
+    denied = access.check_edit(user_id, ENTITY_KPI, kpi.category_id)
+    if denied:
+        return jsonify(denied[0]), denied[1]
+
     data = request.json or {}
 
     err = _validate_payload(data)
     if err:
         return jsonify({"message": err}), 400
+
+    # При смене категории нужно право редактирования и в новой категории
+    if "category_id" in data:
+        denied_target = access.check_edit(user_id, ENTITY_KPI, data.get("category_id"))
+        if denied_target:
+            return jsonify(denied_target[0]), denied_target[1]
 
     # Обновляем все известные поля
     for field in (
@@ -151,6 +175,10 @@ def delete_kpi(kpi_id):
     if kpi is None:
         return jsonify({"message": "Не найдено"}), 404
 
+    denied = access.check_edit(get_current_user_id(), ENTITY_KPI, kpi.category_id)
+    if denied:
+        return jsonify(denied[0]), denied[1]
+
     db.session.delete(kpi)
     db.session.commit()
     return jsonify({"message": "Удалено"})
@@ -163,6 +191,10 @@ def kpi_value(kpi_id):
     kpi = db.session.get(KPI, kpi_id)
     if kpi is None:
         return jsonify({"message": "Не найдено"}), 404
+
+    denied = access.check_view(get_current_user_id(), ENTITY_KPI, kpi.category_id)
+    if denied:
+        return jsonify(denied[0]), denied[1]
 
     try:
         result = calculate_kpi_value(kpi)

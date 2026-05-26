@@ -26,6 +26,7 @@ import {
 import { listDatasets, getDataset } from "../api/datasetApi";
 
 import { useAuth } from "../context/AuthContext";
+import { useAccess } from "../context/AccessContext";
 import { useToast } from "../context/ToastContext";
 import { useConfirm } from "../context/ConfirmContext";
 import Modal from "../components/Modal";
@@ -59,9 +60,10 @@ const SORT_MAP = {
 
 export default function KpiPage() {
   const { user } = useAuth();
+  const { canEdit, canCreateAny, isAdmin } = useAccess();
   const toast = useToast();
   const confirm = useConfirm();
-  const canEdit = user?.roles?.some((r) => ["admin", "expert"].includes(r));
+  const canCreate = canCreateAny("kpi");
 
   const [kpis, setKpis] = useState([]);
   const [categories, setCategories] = useState([]);
@@ -146,22 +148,26 @@ export default function KpiPage() {
           </p>
         </div>
 
-        {canEdit && (
+        {(isAdmin || canCreate) && (
           <div className="flex gap-2">
-            <button
-              onClick={() => setCategoriesOpen(true)}
-              className="flex items-center gap-2 rounded-xl bg-slate-100 px-4 py-2 text-sm font-medium hover:bg-slate-200"
-            >
-              <FolderTree size={16} />
-              Категории
-            </button>
-            <button
-              onClick={handleCreate}
-              className="flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
-            >
-              <Plus size={16} />
-              Создать KPI
-            </button>
+            {isAdmin && (
+              <button
+                onClick={() => setCategoriesOpen(true)}
+                className="flex items-center gap-2 rounded-xl bg-slate-100 px-4 py-2 text-sm font-medium hover:bg-slate-200"
+              >
+                <FolderTree size={16} />
+                Категории
+              </button>
+            )}
+            {canCreate && (
+              <button
+                onClick={handleCreate}
+                className="flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
+              >
+                <Plus size={16} />
+                Создать KPI
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -227,7 +233,7 @@ export default function KpiPage() {
           <div key={kpi.id} className="group relative">
             <KpiCard kpi={kpi} />
 
-            {canEdit && (
+            {canEdit("kpi", kpi.category_id) && (
               <div className="absolute right-3 top-12 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
                 <button
                   onClick={() => handleEdit(kpi)}

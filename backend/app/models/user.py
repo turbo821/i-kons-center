@@ -49,13 +49,21 @@ class User(db.Model):
         cascade="all, delete-orphan"
     )
 
+    # Членства в ролевых группах (с ролью внутри каждой группы)
+    group_memberships = db.relationship(
+        "UserGroupMembership",
+        back_populates="user",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+
     @property
     def role_names(self):
         """Список имён ролей — удобно для JWT-claims и сериализации."""
         return [r.name for r in self.roles]
 
-    def to_dict(self):
-        return {
+    def to_dict(self, include_groups=False):
+        data = {
             "id": self.id,
             "username": self.username,
             "email": self.email,
@@ -63,3 +71,13 @@ class User(db.Model):
             "roles": self.role_names,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
+        if include_groups:
+            data["groups"] = [
+                {
+                    "group_id": m.group_id,
+                    "group_name": m.group.name if m.group else None,
+                    "group_role": m.group_role,
+                }
+                for m in self.group_memberships
+            ]
+        return data

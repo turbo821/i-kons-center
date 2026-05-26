@@ -17,7 +17,7 @@ from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required
 
 from app.database.db import db
-from app.auth.decorators import role_required
+from app.auth.decorators import role_required, admin_required
 
 
 EDITOR_ROLES = ("admin", "expert")
@@ -46,7 +46,7 @@ def create_category_blueprint(name, model, dependant_attr):
         return jsonify([c.to_dict() for c in items])
 
     @bp.route("", methods=["POST"])
-    @role_required(*EDITOR_ROLES)
+    @admin_required
     def create_category():
         data = request.json or {}
 
@@ -68,7 +68,7 @@ def create_category_blueprint(name, model, dependant_attr):
         return jsonify(category.to_dict()), 201
 
     @bp.route("/<int:cat_id>", methods=["PUT"])
-    @role_required(*EDITOR_ROLES)
+    @admin_required
     def update_category(cat_id):
         category = db.session.get(model, cat_id)
         if category is None:
@@ -88,7 +88,7 @@ def create_category_blueprint(name, model, dependant_attr):
         return jsonify(category.to_dict())
 
     @bp.route("/<int:cat_id>", methods=["DELETE"])
-    @role_required(*EDITOR_ROLES)
+    @admin_required
     def delete_category(cat_id):
         category = db.session.get(model, cat_id)
         if category is None:

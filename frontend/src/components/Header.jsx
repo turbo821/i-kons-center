@@ -25,6 +25,7 @@ const PAGE_TITLES = {
   "/datasources": "Источники данных",
   "/kpi": "Показатели KPI",
   "/admin/users": "Пользователи",
+  "/admin/role-groups": "Ролевые группы",
   "/profile": "Профиль",
   "/login": "Вход",
   "/register": "Регистрация",

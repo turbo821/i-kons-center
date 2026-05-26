@@ -12,6 +12,7 @@ import {
 
 import { listWidgets, getWidgetData } from "../api/widgetApi";
 import { useAuth } from "../context/AuthContext";
+import { useAccess } from "../context/AccessContext";
 import { useToast } from "../context/ToastContext";
 import WidgetRenderer from "../components/WidgetRenderer";
 import ListToolbar, { applySort, matchesSearch } from "../components/ListToolbar";
@@ -53,10 +54,9 @@ const SORT_MAP = {
 
 export default function WidgetsPage() {
   const { user } = useAuth();
+  const { canEdit, canCreateAny, isAdmin } = useAccess();
   const toast = useToast();
-  const canEdit = user?.roles?.some((r) =>
-    ["admin", "expert"].includes(r)
-  );
+  const canCreate = canCreateAny("widget");
 
   const [widgets, setWidgets] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -123,22 +123,26 @@ export default function WidgetsPage() {
           </p>
         </div>
 
-        {canEdit && (
+        {(isAdmin || canCreate) && (
           <div className="flex gap-3">
-            <button
-              onClick={() => setCategoriesOpen(true)}
-              className="flex items-center gap-2 rounded-xl bg-slate-100 px-4 py-2 text-sm font-medium hover:bg-slate-200"
-            >
-              <FolderTree size={16} />
-              Категории
-            </button>
-            <Link
-              to="/widgets/new"
-              className="flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
-            >
-              <Plus size={18} />
-              Создать виджет
-            </Link>
+            {isAdmin && (
+              <button
+                onClick={() => setCategoriesOpen(true)}
+                className="flex items-center gap-2 rounded-xl bg-slate-100 px-4 py-2 text-sm font-medium hover:bg-slate-200"
+              >
+                <FolderTree size={16} />
+                Категории
+              </button>
+            )}
+            {canCreate && (
+              <Link
+                to="/widgets/new"
+                className="flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
+              >
+                <Plus size={18} />
+                Создать виджет
+              </Link>
+            )}
           </div>
 
         )}
@@ -199,7 +203,11 @@ export default function WidgetsPage() {
       {filtered.length > 0 && (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
           {filtered.map((w) => (
-            <WidgetCard key={w.id} widget={w} />
+            <WidgetCard
+              key={w.id}
+              widget={w}
+              canEdit={canEdit("widget", w.category_id)}
+            />
           ))}
         </div>
       )}
@@ -233,7 +241,7 @@ function FilterChip({ active, onClick, children }) {
 }
 
 
-function WidgetCard({ widget }) {
+function WidgetCard({ widget, canEdit = false }) {
   const Icon = TYPE_ICON[widget.type] || BarChart3;
 
   const [data, setData] = useState(null);
@@ -257,11 +265,8 @@ function WidgetCard({ widget }) {
     };
   }, [widget.id]);
 
-  return (
-    <Link
-      to={`/widgets/${widget.id}/edit`}
-      className="block rounded-2xl bg-white p-4 shadow-sm transition hover:shadow-md"
-    >
+  const cardInner = (
+    <>
       <div className="mb-3 flex items-start justify-between">
         <div className="flex items-center gap-2">
           <div className="rounded-lg bg-slate-100 p-1.5 text-slate-700">
@@ -289,6 +294,21 @@ function WidgetCard({ widget }) {
           error={error}
         />
       </div>
-    </Link>
+    </>
+  );
+
+  if (canEdit) {
+    return (
+      <Link
+        to={`/widgets/${widget.id}/edit`}
+        className="block rounded-2xl bg-white p-4 shadow-sm transition hover:shadow-md"
+      >
+        {cardInner}
+      </Link>
+    );
+  }
+
+  return (
+    <div className="block rounded-2xl bg-white p-4 shadow-sm">{cardInner}</div>
   );
 }

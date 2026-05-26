@@ -29,6 +29,20 @@ DEFAULT_ROLES = [
 ]
 
 
+def ensure_schema():
+    """
+    Создаёт отсутствующие таблицы (idempotent).
+
+    db.create_all() создаёт только те таблицы, которых ещё нет в БД, и не
+    трогает существующие. Это нужно, чтобы новые таблицы модели ролевых
+    групп (role_groups, user_group_memberships, group_category_access)
+    появились без отдельной Alembic-миграции. Существующие таблицы
+    остаются нетронутыми.
+    """
+    db.create_all()
+    print("[bootstrap] Схема синхронизирована (db.create_all)", flush=True)
+
+
 def ensure_roles():
     """Создаёт базовые роли, если их нет."""
     for name, description in DEFAULT_ROLES:
@@ -102,6 +116,7 @@ def main():
     app = create_app()
     with app.app_context():
         try:
+            ensure_schema()
             ensure_roles()
             ensure_admin()
         except Exception as e:

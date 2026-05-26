@@ -15,7 +15,9 @@ from app.models import (
     DashboardKPI,
     DashboardText,
 )
-from app.auth.decorators import role_required
+from app.auth.decorators import role_required, get_current_user_id
+from app.services import access_service as access
+from app.services.access_service import ENTITY_DASHBOARD
 
 
 dashboard_bp = Blueprint("dashboards", __name__, url_prefix="/api/dashboards")
@@ -55,6 +57,11 @@ def list_dashboards():
     if pinned_only:
         q = q.filter_by(is_pinned=True)
 
+    # Ограничиваем категориями, доступными пользователю
+    q = access.filter_query_by_access(
+        q, Dashboard, get_current_user_id(), ENTITY_DASHBOARD
+    )
+
     # Закреплённые — наверх, остальное — по дате создания
     items = q.order_by(
         Dashboard.is_pinned.desc(),
@@ -77,6 +84,11 @@ def create_dashboard():
             "message": f"Категория id={category_id} не найдена"
         }), 400
 
+    # Создавать дашборд можно только в категории с правом редактирования
+    denied = access.check_edit(get_current_user_id(), ENTITY_DASHBOARD, category_id)
+    if denied:
+        return jsonify(denied[0]), denied[1]
+
     user_id = int(get_jwt_identity())
 
     dashboard = Dashboard(
@@ -91,12 +103,29 @@ def create_dashboard():
     return jsonify(dashboard.to_dict()), 201
 
 
+def _require_dash_view(dashboard):
+    """None если можно просматривать, иначе (json, code)."""
+    return access.check_view(
+        get_current_user_id(), ENTITY_DASHBOARD, dashboard.category_id
+    )
+
+
+def _require_dash_edit(dashboard):
+    """None если можно редактировать, иначе (json, code)."""
+    return access.check_edit(
+        get_current_user_id(), ENTITY_DASHBOARD, dashboard.category_id
+    )
+
+
 @dashboard_bp.route("/<int:dashboard_id>", methods=["GET"])
 @jwt_required()
 def get_dashboard(dashboard_id):
     dashboard = db.session.get(Dashboard, dashboard_id)
     if dashboard is None:
         return jsonify({"message": "Не найдено"}), 404
+    denied = _require_dash_view(dashboard)
+    if denied:
+        return jsonify(denied[0]), denied[1]
     return jsonify(dashboard.to_dict(include_widgets=True))
 
 
@@ -106,6 +135,10 @@ def update_dashboard(dashboard_id):
     dashboard = db.session.get(Dashboard, dashboard_id)
     if dashboard is None:
         return jsonify({"message": "Не найдено"}), 404
+
+    denied = _require_dash_edit(dashboard)
+    if denied:
+        return jsonify(denied[0]), denied[1]
 
     data = request.json or {}
 
@@ -123,6 +156,11 @@ def update_dashboard(dashboard_id):
             return jsonify({
                 "message": f"Категория id={cat} не найдена"
             }), 400
+        denied_target = access.check_edit(
+            get_current_user_id(), ENTITY_DASHBOARD, cat
+        )
+        if denied_target:
+            return jsonify(denied_target[0]), denied_target[1]
         dashboard.category_id = cat
 
     if "is_pinned" in data:
@@ -139,6 +177,10 @@ def delete_dashboard(dashboard_id):
     if dashboard is None:
         return jsonify({"message": "Не найдено"}), 404
 
+    denied = _require_dash_edit(dashboard)
+    if denied:
+        return jsonify(denied[0]), denied[1]
+
     db.session.delete(dashboard)
     db.session.commit()
     return jsonify({"message": "Удалено"})
@@ -154,6 +196,10 @@ def pin_dashboard(dashboard_id):
     dashboard = db.session.get(Dashboard, dashboard_id)
     if dashboard is None:
         return jsonify({"message": "Не найдено"}), 404
+
+    denied = _require_dash_edit(dashboard)
+    if denied:
+        return jsonify(denied[0]), denied[1]
 
     data = request.json or {}
     # Если передано явное значение — используем его; иначе тогглим
@@ -175,6 +221,10 @@ def add_widget_to_dashboard(dashboard_id):
     dashboard = db.session.get(Dashboard, dashboard_id)
     if dashboard is None:
         return jsonify({"message": "Дашборд не найден"}), 404
+
+    denied = _require_dash_edit(dashboard)
+    if denied:
+        return jsonify(denied[0]), denied[1]
 
     data = request.json or {}
     widget_id = data.get("widget_id")
@@ -223,6 +273,12 @@ def remove_widget_from_dashboard(dashboard_id, widget_id):
     if placement is None:
         return jsonify({"message": "Размещение не найдено"}), 404
 
+    dashboard = db.session.get(Dashboard, dashboard_id)
+    if dashboard is not None:
+        denied = _require_dash_edit(dashboard)
+        if denied:
+            return jsonify(denied[0]), denied[1]
+
     db.session.delete(placement)
     db.session.commit()
     return jsonify({"message": "Удалено"})
@@ -237,6 +293,10 @@ def add_kpi_to_dashboard(dashboard_id):
     dashboard = db.session.get(Dashboard, dashboard_id)
     if dashboard is None:
         return jsonify({"message": "Дашборд не найден"}), 404
+
+    denied = _require_dash_edit(dashboard)
+    if denied:
+        return jsonify(denied[0]), denied[1]
 
     data = request.json or {}
     kpi_id = data.get("kpi_id")
@@ -285,6 +345,12 @@ def remove_kpi_from_dashboard(dashboard_id, kpi_id):
     if placement is None:
         return jsonify({"message": "Размещение не найдено"}), 404
 
+    dashboard = db.session.get(Dashboard, dashboard_id)
+    if dashboard is not None:
+        denied = _require_dash_edit(dashboard)
+        if denied:
+            return jsonify(denied[0]), denied[1]
+
     db.session.delete(placement)
     db.session.commit()
     return jsonify({"message": "Удалено"})
@@ -300,6 +366,10 @@ def add_text_to_dashboard(dashboard_id):
     dashboard = db.session.get(Dashboard, dashboard_id)
     if dashboard is None:
         return jsonify({"message": "Дашборд не найден"}), 404
+
+    denied = _require_dash_edit(dashboard)
+    if denied:
+        return jsonify(denied[0]), denied[1]
 
     data = request.json or {}
     style = _sanitize_text_style(data)
@@ -331,6 +401,12 @@ def update_text(dashboard_id, text_id):
     if text is None or text.dashboard_id != dashboard_id:
         return jsonify({"message": "Не найдено"}), 404
 
+    dashboard = db.session.get(Dashboard, dashboard_id)
+    if dashboard is not None:
+        denied = _require_dash_edit(dashboard)
+        if denied:
+            return jsonify(denied[0]), denied[1]
+
     data = request.json or {}
     if "content" in data:
         text.content = data["content"]
@@ -354,6 +430,12 @@ def remove_text_from_dashboard(dashboard_id, text_id):
     text = db.session.get(DashboardText, text_id)
     if text is None or text.dashboard_id != dashboard_id:
         return jsonify({"message": "Не найдено"}), 404
+
+    dashboard = db.session.get(Dashboard, dashboard_id)
+    if dashboard is not None:
+        denied = _require_dash_edit(dashboard)
+        if denied:
+            return jsonify(denied[0]), denied[1]
 
     db.session.delete(text)
     db.session.commit()
@@ -379,6 +461,10 @@ def update_dashboard_layout(dashboard_id):
     dashboard = db.session.get(Dashboard, dashboard_id)
     if dashboard is None:
         return jsonify({"message": "Дашборд не найден"}), 404
+
+    denied = _require_dash_edit(dashboard)
+    if denied:
+        return jsonify(denied[0]), denied[1]
 
     data = request.json or {}
     items = data.get("items") or []
