@@ -24,7 +24,7 @@ user_bp = Blueprint("users", __name__, url_prefix="/api/users")
 @role_required("admin")
 def list_users():
     items = db.session.query(User).order_by(User.created_at.desc()).all()
-    return jsonify([u.to_dict() for u in items])
+    return jsonify([u.to_dict(include_groups=True) for u in items])
 
 
 @user_bp.route("/<int:user_id>", methods=["GET"])
@@ -33,7 +33,7 @@ def get_user(user_id):
     user = db.session.get(User, user_id)
     if user is None:
         return jsonify({"message": "Пользователь не найден"}), 404
-    return jsonify(user.to_dict())
+    return jsonify(user.to_dict(include_groups=True))
 
 
 @user_bp.route("/<int:user_id>/roles", methods=["PUT"])

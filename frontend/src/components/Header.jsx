@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 
 import { useAuth } from "../context/AuthContext";
+import { roleLabel, roleLabels } from "../utils/roleLabels";
 import api from "../services/api";
 
 
@@ -112,7 +113,7 @@ export default function Header() {
                     {user.username}
                   </p>
                   <p className="text-xs leading-tight text-slate-400">
-                    {user.roles?.join(", ")}
+                    {roleLabels(user.roles)}
                   </p>
                 </div>
                 <ChevronDown size={14} className="text-slate-400" />
@@ -129,7 +130,7 @@ export default function Header() {
                           key={r}
                           className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700"
                         >
-                          {r}
+                          {roleLabel(r)}
                         </span>
                       ))}
                     </div>

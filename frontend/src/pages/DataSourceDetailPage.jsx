@@ -32,6 +32,7 @@ import {
 import { datasourceCategoryApi } from "../api/categoryApi";
 
 import { useAuth } from "../context/AuthContext";
+import { useAccess } from "../context/AccessContext";
 import { useToast } from "../context/ToastContext";
 import { useConfirm } from "../context/ConfirmContext";
 import Modal from "../components/Modal";
@@ -55,11 +56,9 @@ const SORT_MAP = {
 export default function DataSourceDetailPage() {
   const { id } = useParams();
   const { user } = useAuth();
+  const { canEdit: canEditCategory } = useAccess();
   const toast = useToast();
   const confirm = useConfirm();
-  const canEdit = user?.roles?.some((r) =>
-    ["admin", "expert"].includes(r)
-  );
 
   const [datasource, setDatasource] = useState(null);
   const [datasets, setDatasets] = useState([]);
@@ -76,6 +75,13 @@ export default function DataSourceDetailPage() {
 
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState("name_asc");
+
+  // Право редактирования определяется категорией самого источника:
+  // эксперт группы, которой открыта эта категория, может менять источник
+  // и его наборы данных; зритель — только просматривать.
+  const canEdit = datasource
+    ? canEditCategory("datasource", datasource.category_id)
+    : false;
 
   const load = async () => {
     setLoading(true);

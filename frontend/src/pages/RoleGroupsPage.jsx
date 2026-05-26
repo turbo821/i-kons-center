@@ -420,9 +420,12 @@ function MembersModal({ open, onClose, group, onChanged }) {
   const [allUsers, setAllUsers] = useState([]);
   const [addUserId, setAddUserId] = useState("");
   const [addRole, setAddRole] = useState("viewer");
+  const [userSearch, setUserSearch] = useState("");
 
   useEffect(() => {
     if (open) {
+      setUserSearch("");
+      setAddUserId("");
       listUsers()
         .then(({ data }) => setAllUsers(data))
         .catch(() => toast.error("Не удалось загрузить пользователей"));
@@ -430,7 +433,15 @@ function MembersModal({ open, onClose, group, onChanged }) {
   }, [open, toast]);
 
   const memberIds = new Set((group.members || []).map((m) => m.user_id));
-  const candidates = allUsers.filter((u) => !memberIds.has(u.id));
+  const term = userSearch.trim().toLowerCase();
+  const candidates = allUsers
+    .filter((u) => !memberIds.has(u.id))
+    .filter(
+      (u) =>
+        !term ||
+        u.username.toLowerCase().includes(term) ||
+        (u.email || "").toLowerCase().includes(term)
+    );
 
   const handleAdd = async () => {
     if (!addUserId) return;
@@ -471,13 +482,24 @@ function MembersModal({ open, onClose, group, onChanged }) {
         {/* Добавление */}
         <div className="rounded-lg border border-slate-200 p-3">
           <p className="mb-2 text-sm font-medium">Добавить участника</p>
+          <input
+            type="text"
+            value={userSearch}
+            onChange={(e) => setUserSearch(e.target.value)}
+            placeholder="Поиск по имени или email…"
+            className="mb-2 w-full rounded-lg border border-slate-300 px-3 py-1.5 text-sm"
+          />
           <div className="flex gap-2">
             <select
               value={addUserId}
               onChange={(e) => setAddUserId(e.target.value)}
               className="flex-1 rounded-lg border border-slate-300 px-2 py-1.5 text-sm"
             >
-              <option value="">Выберите пользователя…</option>
+              <option value="">
+                {candidates.length
+                  ? "Выберите пользователя…"
+                  : "Ничего не найдено"}
+              </option>
               {candidates.map((u) => (
                 <option key={u.id} value={u.id}>
                   {u.username} ({u.email})

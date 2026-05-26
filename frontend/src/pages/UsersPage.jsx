@@ -5,6 +5,7 @@ import {
   Trash2,
   Lock,
   Unlock,
+  X,
 } from "lucide-react";
 
 import {
@@ -14,10 +15,17 @@ import {
   updateUserStatus,
   deleteUser,
 } from "../api/userApi";
+import {
+  listRoleGroups,
+  addGroupMember,
+  updateGroupMemberRole,
+  removeGroupMember,
+} from "../api/roleGroupApi";
 
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
 import { useConfirm } from "../context/ConfirmContext";
+import { roleLabel, groupRoleLabel } from "../utils/roleLabels";
 import Modal from "../components/Modal";
 import ListToolbar, { applySort, matchesSearch } from "../components/ListToolbar";
 
@@ -186,7 +194,7 @@ export default function UsersPage() {
               setRoleFilter(roleFilter === r.name ? null : r.name)
             }
           >
-            {r.name} ({roleCounts[r.name] || 0})
+            {r.name && roleLabel(r.name)} ({roleCounts[r.name] || 0})
           </Chip>
         ))}
 
@@ -265,9 +273,22 @@ export default function UsersPage() {
                         {u.roles.map((r) => (
                           <span
                             key={r}
-                            className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700"
+                            className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                              r === "admin"
+                                ? "bg-purple-100 text-purple-700"
+                                : "bg-slate-100 text-slate-700"
+                            }`}
                           >
-                            {r}
+                            {roleLabel(r)}
+                          </span>
+                        ))}
+                        {(u.groups || []).map((g) => (
+                          <span
+                            key={g.group_id}
+                            className="rounded-full bg-blue-50 px-2 py-0.5 text-xs text-blue-700"
+                            title={`Роль в группе: ${groupRoleLabel(g.group_role)}`}
+                          >
+                            {g.group_name} - {groupRoleLabel(g.group_role)}
                           </span>
                         ))}
                       </div>
@@ -286,7 +307,7 @@ export default function UsersPage() {
                           <button
                             onClick={() => setEditingUser(u)}
                             className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-900"
-                            title="Изменить роли"
+                            title="Управление доступом"
                           >
                             <Shield size={14} />
                           </button>
@@ -366,29 +387,42 @@ function StatusBadge({ status }) {
 
 function EditRolesModal({ user, roles, onClose, onSaved }) {
   const toast = useToast();
-  const [selectedRoles, setSelectedRoles] = useState([]);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [groups, setGroups] = useState([]);
+  const [memberships, setMemberships] = useState([]); // [{group_id, group_role}]
   const [busy, setBusy] = useState(false);
 
+  // Для добавления в новую группу
+  const [addGroupId, setAddGroupId] = useState("");
+  const [addRole, setAddRole] = useState("viewer");
+
   useEffect(() => {
-    if (user) setSelectedRoles(user.roles || []);
+    if (!user) return;
+    setIsAdmin((user.roles || []).includes("admin"));
+    setMemberships(
+      (user.groups || []).map((g) => ({
+        group_id: g.group_id,
+        group_name: g.group_name,
+        group_role: g.group_role,
+      }))
+    );
+    listRoleGroups()
+      .then(({ data }) => setGroups(data))
+      .catch(() => {});
   }, [user]);
 
-  const toggle = (name) =>
-    setSelectedRoles((prev) =>
-      prev.includes(name) ? prev.filter((x) => x !== name) : [...prev, name]
-    );
+  if (!user) return null;
 
-  const handleSave = async () => {
-    if (selectedRoles.length === 0) {
-      toast.error("Выберите хотя бы одну роль");
-      return;
-    }
+  const memberGroupIds = new Set(memberships.map((m) => m.group_id));
+  const candidateGroups = groups.filter((g) => !memberGroupIds.has(g.id));
 
+  // Сохранение глобальной роли admin. viewer оставляем всегда как базовую.
+  const handleSaveAdmin = async () => {
     setBusy(true);
     try {
-      await updateUserRoles(user.id, selectedRoles);
-      toast.success(`Роли пользователя ${user.username} обновлены`);
-      onClose();
+      const newRoles = isAdmin ? ["viewer", "admin"] : ["viewer"];
+      await updateUserRoles(user.id, newRoles);
+      toast.success("Глобальная роль обновлена");
       onSaved();
     } catch (e) {
       toast.error(e?.response?.data?.message || "Ошибка");
@@ -397,54 +431,172 @@ function EditRolesModal({ user, roles, onClose, onSaved }) {
     }
   };
 
-  if (!user) return null;
+  const handleAddToGroup = async () => {
+    if (!addGroupId) return;
+    try {
+      await addGroupMember(Number(addGroupId), user.id, addRole);
+      const g = groups.find((x) => x.id === Number(addGroupId));
+      setMemberships((prev) => [
+        ...prev,
+        {
+          group_id: Number(addGroupId),
+          group_name: g?.name,
+          group_role: addRole,
+        },
+      ]);
+      setAddGroupId("");
+      setAddRole("viewer");
+      toast.success("Пользователь добавлен в группу");
+      onSaved();
+    } catch (e) {
+      toast.error(e?.response?.data?.message || "Ошибка");
+    }
+  };
+
+  const handleChangeGroupRole = async (groupId, role) => {
+    try {
+      await updateGroupMemberRole(groupId, user.id, role);
+      setMemberships((prev) =>
+        prev.map((m) =>
+          m.group_id === groupId ? { ...m, group_role: role } : m
+        )
+      );
+      toast.success("Роль в группе обновлена");
+      onSaved();
+    } catch (e) {
+      toast.error(e?.response?.data?.message || "Ошибка");
+    }
+  };
+
+  const handleRemoveFromGroup = async (groupId) => {
+    try {
+      await removeGroupMember(groupId, user.id);
+      setMemberships((prev) => prev.filter((m) => m.group_id !== groupId));
+      toast.success("Пользователь убран из группы");
+      onSaved();
+    } catch (e) {
+      toast.error(e?.response?.data?.message || "Ошибка");
+    }
+  };
 
   return (
     <Modal
       open={!!user}
       onClose={onClose}
-      title={`Роли: ${user.username}`}
+      title={`Доступ: ${user.username}`}
+      maxWidth="max-w-lg"
     >
-      <div className="space-y-4">
-        <p className="text-sm text-slate-600">
-          Выберите роли, которые будут назначены пользователю
-        </p>
-
-        <div className="space-y-2">
-          {roles.map((r) => (
-            <label
-              key={r.id}
-              className="flex cursor-pointer items-start gap-3 rounded-lg border border-slate-200 p-3 hover:bg-slate-50"
+      <div className="space-y-5">
+        {/* Глобальная роль администратора */}
+        <section className="rounded-lg border border-slate-200 p-3">
+          <label className="flex cursor-pointer items-start gap-3">
+            <input
+              type="checkbox"
+              checked={isAdmin}
+              onChange={(e) => setIsAdmin(e.target.checked)}
+              className="mt-0.5"
+            />
+            <div className="flex-1">
+              <p className="font-medium">Администратор</p>
+              <p className="text-xs text-slate-500">
+                Глобальная роль: управление пользователями, группами и
+                категориями. Доступ к самим сущностям всё равно определяется
+                группами ниже.
+              </p>
+            </div>
+          </label>
+          <div className="mt-2 flex justify-end">
+            <button
+              onClick={handleSaveAdmin}
+              disabled={busy}
+              className="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-50"
             >
-              <input
-                type="checkbox"
-                checked={selectedRoles.includes(r.name)}
-                onChange={() => toggle(r.name)}
-                className="mt-0.5"
-              />
-              <div>
-                <p className="font-medium">{r.name}</p>
-                {r.description && (
-                  <p className="text-xs text-slate-500">{r.description}</p>
-                )}
-              </div>
-            </label>
-          ))}
-        </div>
+              {busy ? "Сохранение..." : "Сохранить роль"}
+            </button>
+          </div>
+        </section>
 
-        <div className="flex justify-end gap-2 pt-2">
+        {/* Членство в ролевых группах */}
+        <section>
+          <h3 className="mb-2 text-sm font-semibold text-slate-700">
+            Ролевые группы
+          </h3>
+
+          {/* Добавление в группу */}
+          <div className="mb-3 flex gap-2">
+            <select
+              value={addGroupId}
+              onChange={(e) => setAddGroupId(e.target.value)}
+              className="flex-1 rounded-lg border border-slate-300 px-2 py-1.5 text-sm"
+            >
+              <option value="">Добавить в группу…</option>
+              {candidateGroups.map((g) => (
+                <option key={g.id} value={g.id}>
+                  {g.name}
+                </option>
+              ))}
+            </select>
+            <select
+              value={addRole}
+              onChange={(e) => setAddRole(e.target.value)}
+              className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm"
+            >
+              <option value="viewer">Зритель</option>
+              <option value="expert">Эксперт</option>
+            </select>
+            <button
+              onClick={handleAddToGroup}
+              disabled={!addGroupId}
+              className="rounded-lg bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
+            >
+              Добавить
+            </button>
+          </div>
+
+          {/* Текущие членства */}
+          <div className="space-y-2">
+            {memberships.length === 0 && (
+              <p className="text-xs text-slate-400">
+                Пользователь не состоит ни в одной группе и поэтому не видит
+                сущности.
+              </p>
+            )}
+            {memberships.map((m) => (
+              <div
+                key={m.group_id}
+                className="flex items-center justify-between rounded-lg border border-slate-200 px-3 py-2"
+              >
+                <span className="text-sm font-medium">{m.group_name}</span>
+                <div className="flex items-center gap-2">
+                  <select
+                    value={m.group_role}
+                    onChange={(e) =>
+                      handleChangeGroupRole(m.group_id, e.target.value)
+                    }
+                    className="rounded-lg border border-slate-300 px-2 py-1 text-xs"
+                  >
+                    <option value="viewer">Зритель</option>
+                    <option value="expert">Эксперт</option>
+                  </select>
+                  <button
+                    onClick={() => handleRemoveFromGroup(m.group_id)}
+                    className="rounded-lg p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600"
+                    title="Убрать из группы"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <div className="flex justify-end pt-2">
           <button
             onClick={onClose}
             className="rounded-lg px-4 py-2 text-sm hover:bg-slate-100"
           >
-            Отмена
-          </button>
-          <button
-            onClick={handleSave}
-            disabled={busy}
-            className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
-          >
-            {busy ? "Сохранение..." : "Сохранить"}
+            Закрыть
           </button>
         </div>
       </div>

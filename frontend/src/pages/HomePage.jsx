@@ -15,6 +15,7 @@ import {
 import { getSystemOverview } from "../api/userApi";
 import { listDashboards } from "../api/dashboardApi";
 import { useAuth } from "../context/AuthContext";
+import { useAccess } from "../context/AccessContext";
 
 
 export default function HomePage() {
@@ -99,6 +100,7 @@ function FeatureCard({ icon: Icon, title, text }) {
 
 function AuthedHome() {
   const { user } = useAuth();
+  const { canCreateAny } = useAccess();
   const [stats, setStats] = useState(null);
   const [pinned, setPinned] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -298,34 +300,45 @@ function AuthedHome() {
       )}
 
       {/* Быстрые действия */}
-      {(user.roles?.includes("admin") || user.roles?.includes("expert")) && (
+      {(canCreateAny("datasource") ||
+        canCreateAny("widget") ||
+        canCreateAny("dashboard") ||
+        canCreateAny("kpi")) && (
         <div className="rounded-2xl bg-white p-6 shadow-sm">
           <h2 className="mb-4 font-semibold">Быстрые действия</h2>
           <div className="flex flex-wrap gap-3">
-            <Link
-              to="/datasources"
-              className="rounded-xl bg-slate-100 px-4 py-2 text-sm font-medium hover:bg-slate-200"
-            >
-              + Подключить источник
-            </Link>
-            <Link
-              to="/widgets/new"
-              className="rounded-xl bg-slate-100 px-4 py-2 text-sm font-medium hover:bg-slate-200"
-            >
-              + Создать виджет
-            </Link>
-            <Link
-              to="/dashboards"
-              className="rounded-xl bg-slate-100 px-4 py-2 text-sm font-medium hover:bg-slate-200"
-            >
-              + Новый дашборд
-            </Link>
-            <Link
-              to="/kpi"
-              className="rounded-xl bg-slate-100 px-4 py-2 text-sm font-medium hover:bg-slate-200"
-            >
-              + Добавить KPI
-            </Link>
+            {canCreateAny("datasource") && (
+              <Link
+                to="/datasources"
+                className="rounded-xl bg-slate-100 px-4 py-2 text-sm font-medium hover:bg-slate-200"
+              >
+                + Подключить источник
+              </Link>
+            )}
+            {canCreateAny("widget") && (
+              <Link
+                to="/widgets/new"
+                className="rounded-xl bg-slate-100 px-4 py-2 text-sm font-medium hover:bg-slate-200"
+              >
+                + Создать виджет
+              </Link>
+            )}
+            {canCreateAny("dashboard") && (
+              <Link
+                to="/dashboards"
+                className="rounded-xl bg-slate-100 px-4 py-2 text-sm font-medium hover:bg-slate-200"
+              >
+                + Новый дашборд
+              </Link>
+            )}
+            {canCreateAny("kpi") && (
+              <Link
+                to="/kpi"
+                className="rounded-xl bg-slate-100 px-4 py-2 text-sm font-medium hover:bg-slate-200"
+              >
+                + Добавить KPI
+              </Link>
+            )}
           </div>
         </div>
       )}

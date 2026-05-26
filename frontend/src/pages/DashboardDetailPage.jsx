@@ -40,6 +40,7 @@ import {
 import { dashboardCategoryApi } from "../api/categoryApi";
 
 import { useAuth } from "../context/AuthContext";
+import { useAccess } from "../context/AccessContext";
 import { useToast } from "../context/ToastContext";
 import { useConfirm } from "../context/ConfirmContext";
 import WidgetRenderer from "../components/WidgetRenderer";
@@ -119,9 +120,9 @@ const PDF_EXPORT_CSS = `
 export default function DashboardDetailPage() {
   const { id } = useParams();
   const { user } = useAuth();
+  const { canEdit: canEditCategory } = useAccess();
   const toast = useToast();
   const confirm = useConfirm();
-  const canEdit = user?.roles?.some((r) => ["admin", "expert"].includes(r));
 
   const [dashboard, setDashboard] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -132,6 +133,12 @@ export default function DashboardDetailPage() {
   const [exportingPdf, setExportingPdf] = useState(false);
 
   const [containerWidth, setContainerWidth] = useState(1200);
+
+  // Право редактирования зависит от категории дашборда: эксперт группы,
+  // которой открыта эта категория, может редактировать; зритель — нет.
+  const canEdit = dashboard
+    ? canEditCategory("dashboard", dashboard.category_id)
+    : false;
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -923,6 +930,11 @@ function AddWidgetModal({ open, onClose, dashboardId, existingWidgetIds, onAdded
                 <p className="text-xs text-slate-500">
                   {w.type} · {w.dataset_name}
                 </p>
+                {w.category_name && (
+                  <p className="mt-1 inline-block rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-600">
+                    {w.category_name}
+                  </p>
+                )}
               </div>
               <Plus size={18} className="text-slate-700" />
             </button>

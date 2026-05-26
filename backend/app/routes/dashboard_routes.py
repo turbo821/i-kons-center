@@ -190,14 +190,16 @@ def delete_dashboard(dashboard_id):
 # Закрепление дашборда
 # ---------------------------------------------------------------------------
 @dashboard_bp.route("/<int:dashboard_id>/pin", methods=["POST"])
-@role_required(*EDITOR_ROLES)
+@jwt_required()
 def pin_dashboard(dashboard_id):
     """Закрепить или открепить дашборд: тогглится между pinned/unpinned."""
     dashboard = db.session.get(Dashboard, dashboard_id)
     if dashboard is None:
         return jsonify({"message": "Не найдено"}), 404
 
-    denied = _require_dash_edit(dashboard)
+    # Закрепление — это удобство навигации, а не изменение содержимого
+    # дашборда, поэтому достаточно права просмотра (зритель тоже может).
+    denied = _require_dash_view(dashboard)
     if denied:
         return jsonify(denied[0]), denied[1]
 

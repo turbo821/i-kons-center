@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Trash2 } from "lucide-react";
+import { Trash2, Pencil, Check, X } from "lucide-react";
 
 import Modal from "./Modal";
 import { useToast } from "../context/ToastContext";
@@ -30,6 +30,11 @@ export default function CategoriesModal({
   const [newDesc, setNewDesc] = useState("");
   const [busy, setBusy] = useState(false);
 
+  // Состояние инлайн-редактирования
+  const [editId, setEditId] = useState(null);
+  const [editName, setEditName] = useState("");
+  const [editDesc, setEditDesc] = useState("");
+
   const handleAdd = async (e) => {
     e.preventDefault();
     if (!newName) return;
@@ -44,6 +49,36 @@ export default function CategoriesModal({
       toast.error(e?.response?.data?.message || "Ошибка");
     } finally {
       setBusy(false);
+    }
+  };
+
+  const startEdit = (cat) => {
+    setEditId(cat.id);
+    setEditName(cat.name);
+    setEditDesc(cat.description || "");
+  };
+
+  const cancelEdit = () => {
+    setEditId(null);
+    setEditName("");
+    setEditDesc("");
+  };
+
+  const handleSaveEdit = async (cat) => {
+    if (!editName.trim()) {
+      toast.error("Имя не может быть пустым");
+      return;
+    }
+    try {
+      await api.update(cat.id, {
+        name: editName.trim(),
+        description: editDesc,
+      });
+      toast.success("Категория обновлена");
+      cancelEdit();
+      onChanged();
+    } catch (e) {
+      toast.error(e?.response?.data?.message || "Ошибка");
     }
   };
 
@@ -99,20 +134,65 @@ export default function CategoriesModal({
           {categories.map((c) => (
             <div
               key={c.id}
-              className="flex items-center justify-between rounded-lg border border-slate-200 p-3"
+              className="rounded-lg border border-slate-200 p-3"
             >
-              <div>
-                <p className="font-medium">{c.name}</p>
-                {c.description && (
-                  <p className="text-xs text-slate-500">{c.description}</p>
-                )}
-              </div>
-              <button
-                onClick={() => handleDelete(c)}
-                className="rounded-lg p-1.5 text-red-600 hover:bg-red-50"
-              >
-                <Trash2 size={14} />
-              </button>
+              {editId === c.id ? (
+                <div className="space-y-2">
+                  <input
+                    type="text"
+                    value={editName}
+                    onChange={(e) => setEditName(e.target.value)}
+                    placeholder="Название"
+                    className="w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm"
+                  />
+                  <input
+                    type="text"
+                    value={editDesc}
+                    onChange={(e) => setEditDesc(e.target.value)}
+                    placeholder="Описание (опционально)"
+                    className="w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm"
+                  />
+                  <div className="flex justify-end gap-1">
+                    <button
+                      onClick={() => handleSaveEdit(c)}
+                      className="flex items-center gap-1 rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-800"
+                    >
+                      <Check size={13} /> Сохранить
+                    </button>
+                    <button
+                      onClick={cancelEdit}
+                      className="flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs hover:bg-slate-100"
+                    >
+                      <X size={13} /> Отмена
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="font-medium">{c.name}</p>
+                    {c.description && (
+                      <p className="text-xs text-slate-500">{c.description}</p>
+                    )}
+                  </div>
+                  <div className="flex gap-1">
+                    <button
+                      onClick={() => startEdit(c)}
+                      className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+                      title="Изменить"
+                    >
+                      <Pencil size={14} />
+                    </button>
+                    <button
+                      onClick={() => handleDelete(c)}
+                      className="rounded-lg p-1.5 text-red-600 hover:bg-red-50"
+                      title="Удалить"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           ))}
         </div>

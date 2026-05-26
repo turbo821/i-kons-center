@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 
 import { useAuth } from "../context/AuthContext";
+import { roleLabel } from "../utils/roleLabels";
 import { useToast } from "../context/ToastContext";
 import { changePassword } from "../api/userApi";
 import PasswordInput from "../components/PasswordInput";
@@ -94,7 +95,7 @@ export default function ProfilePage() {
                     key={r}
                     className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700"
                   >
-                    {r}
+                    {roleLabel(r)}
                   </span>
                 ))}
               </div>
