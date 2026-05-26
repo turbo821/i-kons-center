@@ -182,22 +182,6 @@ export default function UsersPage() {
 
       {/* Фильтры: роли и статус */}
       <div className="flex flex-wrap items-center gap-2">
-        <span className="text-xs font-medium text-slate-400">Роль:</span>
-        <Chip active={roleFilter === null} onClick={() => setRoleFilter(null)}>
-          Все ({users.length})
-        </Chip>
-        {roles.map((r) => (
-          <Chip
-            key={r.id}
-            active={roleFilter === r.name}
-            onClick={() =>
-              setRoleFilter(roleFilter === r.name ? null : r.name)
-            }
-          >
-            {r.name && roleLabel(r.name)} ({roleCounts[r.name] || 0})
-          </Chip>
-        ))}
-
         <span className="ml-3 text-xs font-medium text-slate-400">Статус:</span>
         <Chip
           active={statusFilter === null}
