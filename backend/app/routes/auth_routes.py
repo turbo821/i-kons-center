@@ -81,9 +81,32 @@ def login():
             "username": user.username,
             "email": user.email,
             "roles": [role.name for role in user.roles],
+            "groups": _serialize_user_groups(user),
             "created_at": user.created_at.isoformat() if user.created_at else None,
         }
     })
+
+
+def _serialize_user_groups(user):
+    """Сериализует группы пользователя с перечнем открытых ими категорий.
+
+    Используется в эндпоинтах /login и /me, чтобы фронт получал единый
+    формат: для каждой группы её роль внутри и список доступных категорий
+    (нужно для отображения в профиле).
+    """
+    if not user:
+        return []
+    return [
+        {
+            "group_id": m.group_id,
+            "group_name": m.group.name if m.group else None,
+            "group_role": m.group_role,
+            "categories": [
+                a.to_dict() for a in (m.group.category_accesses or [])
+            ] if m.group else [],
+        }
+        for m in user.group_memberships
+    ]
 
 
 @auth_bp.route("/me", methods=["GET"])
@@ -94,22 +117,12 @@ def me():
 
     # Также возвращаем username — для отображения в Header
     user = db.session.get(User, int(user_id))
-    groups = []
-    if user:
-        groups = [
-            {
-                "group_id": m.group_id,
-                "group_name": m.group.name if m.group else None,
-                "group_role": m.group_role,
-            }
-            for m in user.group_memberships
-        ]
     return jsonify({
         "id": user_id,
         "username": user.username if user else None,
         "email": claims["email"],
         "roles": claims["roles"],
-        "groups": groups,
+        "groups": _serialize_user_groups(user),
         "created_at": user.created_at.isoformat() if user and user.created_at else None,
     })
 

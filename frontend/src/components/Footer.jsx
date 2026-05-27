@@ -1,5 +1,4 @@
 import { Mail } from "lucide-react";
-import { FaGithub } from "react-icons/fa";
 
 const APP_VERSION = "1.3.0";
 
@@ -18,12 +17,6 @@ export default function Footer() {
 
         <div className="flex items-center gap-2">
           <span>v{APP_VERSION}</span>
-          <a
-            href="https://github.com/turbo821/i-kons-center"
-            className="flex items-center gap-1 transition hover:text-white"
-          >
-            <FaGithub size={12} />
-          </a>
           <a
             href="mailto:turbo3735@gmail.com"
             className="flex items-center gap-1 transition hover:text-white"

@@ -7,10 +7,11 @@ import {
   Shield,
   ChevronDown,
   ChevronUp,
+  Layers,
 } from "lucide-react";
 
 import { useAuth } from "../context/AuthContext";
-import { roleLabel } from "../utils/roleLabels";
+import { roleLabel, groupRoleLabel } from "../utils/roleLabels";
 import { useToast } from "../context/ToastContext";
 import { changePassword } from "../api/userApi";
 import PasswordInput from "../components/PasswordInput";
@@ -104,7 +105,32 @@ export default function ProfilePage() {
         </div>
       </div>
 
-      {/* Смена пароля — сворачиваемая */}
+      {/* Мои группы и роли */}
+      <div className="rounded-2xl bg-white p-6 shadow-sm">
+        <h2 className="mb-1 flex items-center gap-2 font-semibold">
+          <Layers size={18} className="text-slate-600" />
+          Мои группы и роли
+        </h2>
+        <p className="mb-4 text-sm text-slate-500">
+          Доступ к данным определяется вашим участием в ролевых группах. В
+          каждой группе вы либо эксперт (можете редактировать), либо зритель
+          (только просмотр).
+        </p>
+
+        {(!user.groups || user.groups.length === 0) ? (
+          <div className="rounded-xl bg-slate-50 p-4 text-sm text-slate-500">
+            Вы пока не состоите ни в одной группе, поэтому разделы с данными
+            недоступны. Чтобы получить доступ, попросите администратора
+            добавить вас в нужную группу.
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {user.groups.map((g) => (
+              <GroupCard key={g.group_id} group={g} />
+            ))}
+          </div>
+        )}
+      </div>
       <div className="rounded-2xl bg-white shadow-sm">
         <button
           onClick={() => setPwdOpen((o) => !o)}
@@ -199,4 +225,113 @@ function Field({ label, ...props }) {
       <PasswordInput {...props} />
     </div>
   );
+}
+
+
+// Метки типов сущностей для отображения категорий доступа.
+const ENTITY_TYPE_LABELS = {
+  datasource: "Источники данных",
+  widget: "Виджеты",
+  dashboard: "Дашборды",
+  kpi: "Показатели KPI",
+};
+// Порядок отображения групп категорий
+const ENTITY_TYPE_ORDER = ["datasource", "widget", "dashboard", "kpi"];
+
+
+function GroupCard({ group }) {
+  const [open, setOpen] = useState(false);
+
+  const isExpert = group.group_role === "expert";
+  const categories = group.categories || [];
+
+  // Группируем категории по типу сущности
+  const grouped = ENTITY_TYPE_ORDER.map((type) => ({
+    type,
+    label: ENTITY_TYPE_LABELS[type],
+    items: categories
+      .filter((c) => c.entity_type === type)
+      .map((c) => c.category_name || "Без категории"),
+  })).filter((g) => g.items.length > 0);
+
+  return (
+    <div className="overflow-hidden rounded-xl border border-slate-200">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-slate-50"
+      >
+        <span className="flex items-center gap-2">
+          <span className="font-medium">{group.group_name}</span>
+          <span className="text-xs text-slate-400">
+            {categories.length > 0
+              ? `${categories.length} ${pluralCategory(categories.length)}`
+              : "доступ не настроен"}
+          </span>
+        </span>
+        <span className="flex items-center gap-2">
+          <span
+            className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
+              isExpert
+                ? "bg-emerald-100 text-emerald-700"
+                : "bg-blue-100 text-blue-700"
+            }`}
+          >
+            {groupRoleLabel(group.group_role)}
+          </span>
+          {open ? (
+            <ChevronUp size={16} className="text-slate-400" />
+          ) : (
+            <ChevronDown size={16} className="text-slate-400" />
+          )}
+        </span>
+      </button>
+
+      {open && (
+        <div className="border-t border-slate-200 bg-slate-50 px-4 py-3">
+          <p className="mb-2 text-xs text-slate-500">
+            Группа открывает доступ к следующим категориям
+            {isExpert
+              ? " (с правом редактирования)"
+              : " (только просмотр)"}
+            :
+          </p>
+          {grouped.length === 0 ? (
+            <p className="text-sm text-slate-400">
+              Администратор пока не открыл этой группе ни одной категории.
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {grouped.map((g) => (
+                <div key={g.type}>
+                  <p className="mb-1 text-xs font-semibold text-slate-600">
+                    {g.label}
+                  </p>
+                  <div className="flex flex-wrap gap-1">
+                    {g.items.map((name, idx) => (
+                      <span
+                        key={`${g.type}-${idx}-${name}`}
+                        className="rounded-md bg-white px-2 py-0.5 text-xs text-slate-700 shadow-sm"
+                      >
+                        {name}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+// Правильное склонение слова «категория» для русского числа
+function pluralCategory(n) {
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  if (mod10 === 1 && mod100 !== 11) return "категория";
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return "категории";
+  return "категорий";
 }

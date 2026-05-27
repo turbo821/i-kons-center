@@ -77,6 +77,12 @@ class User(db.Model):
                     "group_id": m.group_id,
                     "group_name": m.group.name if m.group else None,
                     "group_role": m.group_role,
+                    # Список категорий, к которым группа открывает доступ.
+                    # Нужен пользователю в профиле, чтобы видеть, какие
+                    # категории сущностей ему доступны через каждую группу.
+                    "categories": [
+                        a.to_dict() for a in (m.group.category_accesses or [])
+                    ] if m.group else [],
                 }
                 for m in self.group_memberships
             ]
