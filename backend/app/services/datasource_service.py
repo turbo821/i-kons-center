@@ -147,11 +147,6 @@ def _read_file_to_df(
     nrows: Optional[int] = None,
     sheet_name: Optional[str] = None,
 ) -> pd.DataFrame:
-    """
-    Читает CSV или Excel в DataFrame.
-    Для Excel параметр sheet_name указывает конкретный лист (по умолчанию
-    берётся первый лист).
-    """
     ext = _file_extension(file_path)
 
     if ext == "csv":
@@ -161,9 +156,6 @@ def _read_file_to_df(
             return pd.read_csv(file_path, nrows=nrows, encoding="cp1251")
 
     if ext in EXCEL_EXTENSIONS:
-        # Если лист не указан — берём первый (pd.read_excel так и делает
-        # по умолчанию). Если указан несуществующий — read_excel поднимет
-        # ValueError, что мы поймаем выше.
         if sheet_name is None:
             return pd.read_excel(file_path, nrows=nrows)
         return pd.read_excel(file_path, sheet_name=sheet_name, nrows=nrows)

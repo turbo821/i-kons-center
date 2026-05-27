@@ -230,7 +230,6 @@ def _prepare_date_dims(widget, df):
 def _aggregate_with_dimensions(widget: Widget, df: pd.DataFrame) -> dict:
     df = _prepare_date_dims(widget, df)
 
-    # Физические колонки измерений (имена полей в данных) и их отображаемые имена
     dim_field_cols = [d.field.name for d in widget.dimensions]
     dim_display = [_dim_display_name(d) for d in widget.dimensions]
 
@@ -251,50 +250,40 @@ def _aggregate_with_dimensions(widget: Widget, df: pd.DataFrame) -> dict:
             "series_keys": [], "stacked": False,
         }
 
-    # Уберём строки с пустыми значениями группирующих полей
     df = df.dropna(subset=dim_field_cols, how="any")
 
     single_metric = len(metric_keys) == 1
     multi_dim = len(widget.dimensions) >= 2
 
-    # =====================================================================
-    # PIVOT: одна метрика + 2+ измерения.
-    # Ось X = первое измерение; серии = комбинация значений остальных.
-    # =====================================================================
     if single_metric and multi_dim:
         metric_name = metric_keys[0]
         x_field = dim_field_cols[0]
         x_display = dim_display[0]
         series_fields = dim_field_cols[1:]
 
-        # Группируем по всем измерениям, агрегируем метрику
         grouped = df.groupby(dim_field_cols, dropna=False, as_index=False).agg(**agg_spec)
 
-        # Метка серии = склейка значений 2-го+ измерений
+        # склейка значений 2-го+ измерений
         def make_series_label(row):
             parts = [str(row[c]) for c in series_fields]
             return SERIES_SEP.join(parts)
 
         grouped["__series__"] = grouped.apply(make_series_label, axis=1)
 
-        # Pivot: индекс — значение оси X, columns — серии, values — метрика
         pivot = grouped.pivot_table(
             index=x_field,
             columns="__series__",
             values=metric_name,
-            aggfunc="sum",  # на случай дублей после склейки
+            aggfunc="sum",
         )
 
-        # Упорядочим серии по суммарному вкладу (крупные — первыми)
         series_order = (
             pivot.sum(axis=0).sort_values(ascending=False).index.tolist()
         )
         pivot = pivot[series_order]
 
-        # Упорядочим ось X по суммарному значению
         pivot = pivot.loc[pivot.sum(axis=1).sort_values(ascending=False).index]
 
-        # Собираем rows: на каждое значение X — объект {x_display: ..., <серия>: ...}
         rows = []
         for x_val, prow in pivot.iterrows():
             obj = {x_display: _to_json_value(x_val)}
