@@ -65,25 +65,10 @@ def is_global_admin(user_or_roles):
     # список/множество имён ролей
     return "admin" in set(user_or_roles)
 
-
+# Строит карту эффективного доступа пользователя.
 def build_access_map(user_id):
-    """
-    Строит карту эффективного доступа пользователя.
-
-    Возвращает словарь вида:
-        {
-          "datasource": { 3: "edit", None: "view", 5: "view" },
-          "widget":     { 1: "edit" },
-          "dashboard":  {},
-          "kpi":        {},
-        }
-    Ключи внутреннего словаря — category_id (None = «Без категории»),
-    значения — "view" или "edit". Категории, к которым доступа нет, в карте
-    отсутствуют.
-    """
     access_map = {etype: {} for etype in VALID_ENTITY_TYPES}
 
-    # Собираем членства пользователя: group_id -> роль внутри группы
     memberships = (
         db.session.query(UserGroupMembership)
         .filter(UserGroupMembership.user_id == user_id)
@@ -95,7 +80,6 @@ def build_access_map(user_id):
     role_by_group = {m.group_id: m.group_role for m in memberships}
     group_ids = list(role_by_group.keys())
 
-    # Все доступы к категориям этих групп
     accesses = (
         db.session.query(GroupCategoryAccess)
         .filter(GroupCategoryAccess.group_id.in_(group_ids))
@@ -114,7 +98,7 @@ def build_access_map(user_id):
         if acc.entity_type not in access_map:
             continue
 
-        cat_key = acc.category_id  # None для «Без категории»
+        cat_key = acc.category_id
         existing = access_map[acc.entity_type].get(cat_key, ACCESS_NONE)
         access_map[acc.entity_type][cat_key] = _max_level(existing, level)
 
@@ -162,16 +146,9 @@ def editable_category_ids(user_id, entity_type):
 
 
 def filter_query_by_access(query, model, user_id, entity_type):
-    """
-    Применяет к SQLAlchemy-запросу фильтр по просматриваемым категориям.
-
-    model должна иметь поле category_id. Если у пользователя нет доступа ни
-    к одной категории — запрос гарантированно вернёт пусто.
-    """
     cat_ids = viewable_category_ids(user_id, entity_type)
 
     if not cat_ids:
-        # Нет доступа ни к чему — заведомо ложное условие
         return query.filter(db.false())
 
     conditions = []

@@ -15,7 +15,7 @@ flask db upgrade || {
   echo "[entrypoint] Запустите 'flask db init' и 'flask db migrate' один раз вручную"
 }
 
-# Создание администратора (идемпотентно — пропускается, если уже есть)
+# Создание администратора
 echo "[entrypoint] Проверка администратора..."
 python bootstrap_admin.py
 

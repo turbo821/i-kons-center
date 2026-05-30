@@ -63,7 +63,6 @@ def _compute_metric_value(metric):
 
 def _compute_achievement_percent(current, target, direction):
     """
-    Процент выполнения цели.
     higher_better: 100% при current >= target, считается как current/target
     lower_better:  100% при current <= target, считается как target/current
     """
@@ -77,12 +76,10 @@ def _compute_achievement_percent(current, target, direction):
         return None
 
     if direction == "lower_better":
-        # При нулевом current и положительном target — цель идеально перевыполнена
         if current == 0:
             return 100.0 if target > 0 else None
         return round((target / current) * 100, 2)
 
-    # higher_better по умолчанию
     return round((current / target) * 100, 2)
 
 
