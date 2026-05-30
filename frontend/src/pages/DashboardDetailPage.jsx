@@ -325,7 +325,6 @@ export default function DashboardDetailPage() {
     }
   };
 
-  // Экспорт в PDF: см. комментарий к PDF_EXPORT_CSS.
   const handleExportPdf = async () => {
     setExportingPdf(true);
 

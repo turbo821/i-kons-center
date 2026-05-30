@@ -471,7 +471,6 @@ def update_dashboard_layout(dashboard_id):
     data = request.json or {}
     items = data.get("items") or []
 
-    # Загружаем все размещения одним махом
     widget_placements = (
         db.session.query(DashboardWidget)
         .filter_by(dashboard_id=dashboard_id)
