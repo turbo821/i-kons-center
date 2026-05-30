@@ -176,26 +176,28 @@ function KpiBody({ data, compact }) {
             />
           </div>
 
-          {!compact && (
-            <div className="flex items-center justify-between text-xs">
-              <span className="text-slate-500">
-                Цель: {formattedTarget}
-                {unit ? ` ${unit}` : ""}
-              </span>
-              <span
-                className={`flex items-center gap-1 font-medium ${textColor}`}
-              >
-                {is_target_met ? (
-                  <CheckCircle2 size={12} />
-                ) : (
-                  <AlertCircle size={12} />
-                )}
-                {achievement_percent !== null
-                  ? `${achievement_percent}%`
-                  : "—"}
-              </span>
-            </div>
-          )}
+          <div
+            className={`flex items-center justify-between ${
+              compact ? "text-[11px]" : "text-xs"
+            }`}
+          >
+            <span className="text-slate-500">
+              Цель: {formattedTarget}
+              {unit ? ` ${unit}` : ""}
+            </span>
+            <span
+              className={`flex items-center gap-1 font-medium ${textColor}`}
+            >
+              {is_target_met ? (
+                <CheckCircle2 size={12} />
+              ) : (
+                <AlertCircle size={12} />
+              )}
+              {achievement_percent !== null
+                ? `${achievement_percent}%`
+                : "—"}
+            </span>
+          </div>
         </>
       )}
     </div>
