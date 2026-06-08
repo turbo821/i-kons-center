@@ -184,7 +184,7 @@ ADMIN_PASSWORD=very-strong-password
 # Создать БД и пользователя
 psql -U postgres -c "CREATE DATABASE infocenter;"
 
-# Выполнить инициализационные SQL
+# Выполнить инициализационные SQL (только после миграции)
 psql -U postgres -d infocenter -f db/scripts/01-create-roles.sql
 psql -U postgres -d infocenter -f db/scripts/02-kpi-categories.sql
 psql -U postgres -d infocenter -f db/scripts/03-datasource-categories.sql
