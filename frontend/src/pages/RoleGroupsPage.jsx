@@ -489,11 +489,12 @@ function MembersModal({ open, onClose, group, onChanged }) {
             placeholder="Поиск по имени или email…"
             className="mb-2 w-full rounded-lg border border-slate-300 px-3 py-1.5 text-sm"
           />
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <select
               value={addUserId}
               onChange={(e) => setAddUserId(e.target.value)}
-              className="flex-1 rounded-lg border border-slate-300 px-2 py-1.5 text-sm"
+              className="min-w-[150px] flex-1 rounded-lg border border-slate-300 px-2 py-1.5 text-sm truncate"
+              style={{ maxWidth: "calc(100% - 120px)" }} // резервируем место под селект роли + кнопку
             >
               <option value="">
                 {candidates.length
@@ -509,7 +510,7 @@ function MembersModal({ open, onClose, group, onChanged }) {
             <select
               value={addRole}
               onChange={(e) => setAddRole(e.target.value)}
-              className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm"
+              className="w-auto rounded-lg border border-slate-300 px-2 py-1.5 text-sm"
             >
               <option value="viewer">Зритель</option>
               <option value="expert">Эксперт</option>
@@ -517,7 +518,7 @@ function MembersModal({ open, onClose, group, onChanged }) {
             <button
               onClick={handleAdd}
               disabled={!addUserId}
-              className="rounded-lg bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
+              className="whitespace-nowrap rounded-lg bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
             >
               Добавить
             </button>
