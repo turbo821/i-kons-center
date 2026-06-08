@@ -129,7 +129,7 @@ export default function RoleGroupsPage() {
           <h1 className="text-2xl font-bold">Ролевые группы</h1>
           <p className="text-slate-600">
             Группы определяют, какие категории сущностей доступны участникам и
-            на каком уровне (эксперт — редактирование, зритель — просмотр).
+            на каком уровне.
           </p>
         </div>
         <button
