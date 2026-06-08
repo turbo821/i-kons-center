@@ -218,12 +218,12 @@ def aggregate_widget_data(widget: Widget) -> dict:
 
 
 def _prepare_date_dims(widget, df):
-    """Приводит date/datetime-измерения к строке YYYY-MM-DD для группировки."""
     for d in widget.dimensions:
         if d.field.data_type in ("date", "datetime"):
             col = d.field.name
             if col in df.columns:
-                df[col] = pd.to_datetime(df[col], errors="coerce").dt.strftime("%Y-%m-%d")
+                parsed = pd.to_datetime(df[col], errors="coerce")
+                df[col] = parsed.dt.strftime("%Y-%m-%d").where(parsed.notna(), None)
     return df
 
 

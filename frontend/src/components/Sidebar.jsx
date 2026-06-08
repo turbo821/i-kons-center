@@ -78,7 +78,7 @@ export default function Sidebar({ collapsed, setCollapsed }) {
   return (
     <aside
       className={`
-        flex h-screen flex-col border-r border-slate-800
+        sticky top-0 flex h-screen flex-col border-r border-slate-800
         bg-slate-900 text-white transition-all duration-300
         ${collapsed ? "w-20" : "w-64"}
       `}
