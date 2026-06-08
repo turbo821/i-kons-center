@@ -42,6 +42,7 @@ import { widgetCategoryApi } from "../api/categoryApi";
 
 import { useToast } from "../context/ToastContext";
 import { useConfirm } from "../context/ConfirmContext";
+import { useAccess } from "../context/AccessContext";
 import WidgetRenderer from "../components/WidgetRenderer";
 
 
@@ -82,6 +83,7 @@ export default function WidgetBuilderPage() {
   const navigate = useNavigate();
   const toast = useToast();
   const confirm = useConfirm();
+  const { editableCategoryIds } = useAccess();
   const isEdit = !!widgetId;
 
   const [datasets, setDatasets] = useState([]);
@@ -548,12 +550,27 @@ export default function WidgetBuilderPage() {
               onChange={(e) => setCategoryId(e.target.value)}
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
             >
-              <option value="">— без категории —</option>
-              {categories.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
+              {(() => {
+                const editableIds = editableCategoryIds("widget");
+                const allowNoCategory = editableIds.has(null);
+                const editableCats = categories.filter((c) =>
+                  editableIds.has(c.id)
+                );
+                return (
+                  <>
+                    <option value="">
+                      {allowNoCategory
+                        ? "— без категории —"
+                        : "— выберите категорию —"}
+                    </option>
+                    {editableCats.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </>
+                );
+              })()}
             </select>
           </Section>
 

@@ -15,15 +15,13 @@ from flask_jwt_extended import jwt_required
 
 from app.database.db import db
 from app.models import KPI, KPICategory, Metric
-from app.auth.decorators import role_required, get_current_user_id
+from app.auth.decorators import get_current_user_id
 from app.services.kpi_service import calculate_kpi_value
 from app.services import access_service as access
 from app.services.access_service import ENTITY_KPI
 
 
 kpi_bp = Blueprint("kpis", __name__, url_prefix="/api/kpis")
-
-EDITOR_ROLES = ("admin", "expert")
 
 ALLOWED_DIRECTIONS = {"higher_better", "lower_better"}
 
@@ -69,7 +67,7 @@ def list_kpis():
 
 
 @kpi_bp.route("", methods=["POST"])
-@role_required(*EDITOR_ROLES)
+@jwt_required()
 def create_kpi():
     """
     Body:
@@ -126,7 +124,7 @@ def get_kpi(kpi_id):
 
 
 @kpi_bp.route("/<int:kpi_id>", methods=["PUT"])
-@role_required(*EDITOR_ROLES)
+@jwt_required()
 def update_kpi(kpi_id):
     kpi = db.session.get(KPI, kpi_id)
     if kpi is None:
@@ -169,7 +167,7 @@ def update_kpi(kpi_id):
 
 
 @kpi_bp.route("/<int:kpi_id>", methods=["DELETE"])
-@role_required(*EDITOR_ROLES)
+@jwt_required()
 def delete_kpi(kpi_id):
     kpi = db.session.get(KPI, kpi_id)
     if kpi is None:

@@ -288,12 +288,19 @@ function CreateDashboardModal({
   categories,
 }) {
   const toast = useToast();
+  const { editableCategoryIds } = useAccess();
   const [form, setForm] = useState({
     name: "",
     description: "",
     category_id: "",
   });
   const [busy, setBusy] = useState(false);
+
+  // Показываем только категории, в которых пользователь имеет право
+  // редактирования — иначе при сохранении вернётся 403 с бэкенда.
+  const editableIds = editableCategoryIds("dashboard");
+  const allowNoCategory = editableIds.has(null);
+  const editableCategories = categories.filter((c) => editableIds.has(c.id));
 
   const submit = async (e) => {
     e.preventDefault();
@@ -363,9 +370,13 @@ function CreateDashboardModal({
             }
             className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
           >
-            <option value="">— без категории —</option>
+            <option value="">
+              {allowNoCategory
+                ? "— без категории —"
+                : "— выберите категорию —"}
+            </option>
 
-            {categories.map((c) => (
+            {editableCategories.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name}
               </option>

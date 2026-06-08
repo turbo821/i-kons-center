@@ -31,7 +31,6 @@ import {
 } from "../api/datasetApi";
 import { datasourceCategoryApi } from "../api/categoryApi";
 
-import { useAuth } from "../context/AuthContext";
 import { useAccess } from "../context/AccessContext";
 import { useToast } from "../context/ToastContext";
 import { useConfirm } from "../context/ConfirmContext";
@@ -55,8 +54,7 @@ const SORT_MAP = {
 
 export default function DataSourceDetailPage() {
   const { id } = useParams();
-  const { user } = useAuth();
-  const { canEdit: canEditCategory } = useAccess();
+  const { canEdit: canEditCategory, editableCategoryIds } = useAccess();
   const toast = useToast();
   const confirm = useConfirm();
 
@@ -290,6 +288,7 @@ export default function DataSourceDetailPage() {
         datasource={datasource}
         categories={categories}
         onUpdated={load}
+        editableCategoryIds={editableCategoryIds}
       />
 
       {editDatasetOpen && (
@@ -574,7 +573,7 @@ function CreateDatasetModal({ open, onClose, datasource, onCreated }) {
 
 
 // ----- Редактирование метаданных источника -----
-function EditDatasourceMetaModal({ open, onClose, datasource, categories, onUpdated }) {
+function EditDatasourceMetaModal({ open, onClose, datasource, categories, onUpdated, editableCategoryIds }) {
   const toast = useToast();
   const [form, setForm] = useState({ name: "", category_id: "" });
   const [busy, setBusy] = useState(false);
@@ -628,12 +627,21 @@ function EditDatasourceMetaModal({ open, onClose, datasource, categories, onUpda
             }
             className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
           >
-            <option value="">— без категории —</option>
-            {categories.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
+            {(() => {
+              const editableIds = editableCategoryIds("datasource");
+              const allowNoCategory = editableIds.has(null);
+              const editableCats = categories.filter((c) => editableIds.has(c.id));
+              return (
+                <>
+                  <option value="">{allowNoCategory ? "— без категории —" : "— выберите категорию —"}</option>
+                  {editableCats.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </>
+              );
+            })()}
           </select>
         </div>
 

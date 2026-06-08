@@ -26,7 +26,7 @@ from app.models import (
     DatasetField,
     DashboardWidget,
 )
-from app.auth.decorators import role_required, get_current_user_id
+from app.auth.decorators import get_current_user_id
 from app.services.widget_data_service import (
     aggregate_widget_data,
     FILTER_OPERATORS,
@@ -36,8 +36,6 @@ from app.services.access_service import ENTITY_WIDGET
 
 
 widget_bp = Blueprint("widgets", __name__, url_prefix="/api/widgets")
-
-EDITOR_ROLES = ("admin", "expert")
 
 ALLOWED_WIDGET_TYPES = {"bar", "horizontal_bar", "line", "pie", "table"}
 
@@ -176,7 +174,7 @@ def list_widgets():
 # CREATE
 # ---------------------------------------------------------------------------
 @widget_bp.route("", methods=["POST"])
-@role_required(*EDITOR_ROLES)
+@jwt_required()
 def create_widget():
     """
     Body:
@@ -269,7 +267,7 @@ def get_widget(widget_id):
 # UPDATE
 # ---------------------------------------------------------------------------
 @widget_bp.route("/<int:widget_id>", methods=["PUT"])
-@role_required(*EDITOR_ROLES)
+@jwt_required()
 def update_widget(widget_id):
     widget = db.session.get(Widget, widget_id)
     if widget is None:
@@ -339,7 +337,7 @@ def update_widget(widget_id):
 # DELETE
 # ---------------------------------------------------------------------------
 @widget_bp.route("/<int:widget_id>", methods=["DELETE"])
-@role_required(*EDITOR_ROLES)
+@jwt_required()
 def delete_widget(widget_id):
     widget = db.session.get(Widget, widget_id)
     if widget is None:

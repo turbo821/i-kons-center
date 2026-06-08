@@ -13,15 +13,13 @@ from flask_jwt_extended import jwt_required
 
 from app.database.db import db
 from app.models import Metric, DatasetField, Dataset
-from app.auth.decorators import role_required, get_current_user_id
+from app.auth.decorators import get_current_user_id
 from app.services.widget_data_service import AGGREGATION_FUNCS
 from app.services import access_service as access
 from app.services.access_service import ENTITY_DATASOURCE
 
 
 metric_bp = Blueprint("metrics", __name__, url_prefix="/api/metrics")
-
-EDITOR_ROLES = ("admin", "expert")
 
 
 # Агрегации, разрешённые только на числовых полях. count и count_distinct
@@ -76,7 +74,7 @@ def list_metrics():
 
 
 @metric_bp.route("", methods=["POST"])
-@role_required(*EDITOR_ROLES)
+@jwt_required()
 def create_metric():
     """
     Body:
@@ -131,7 +129,7 @@ def create_metric():
 
 
 @metric_bp.route("/<int:metric_id>", methods=["PUT"])
-@role_required(*EDITOR_ROLES)
+@jwt_required()
 def update_metric(metric_id):
     """
     Обновить метрику. Допустимы изменения:
@@ -185,7 +183,7 @@ def update_metric(metric_id):
 
 
 @metric_bp.route("/<int:metric_id>", methods=["DELETE"])
-@role_required(*EDITOR_ROLES)
+@jwt_required()
 def delete_metric(metric_id):
     metric = db.session.get(Metric, metric_id)
     if metric is None:

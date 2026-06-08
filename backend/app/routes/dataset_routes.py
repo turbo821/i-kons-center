@@ -14,15 +14,13 @@ from flask_jwt_extended import jwt_required
 
 from app.database.db import db
 from app.models import DataSource, Dataset, DatasetField
-from app.auth.decorators import role_required, get_current_user_id
+from app.auth.decorators import get_current_user_id
 from app.services import datasource_service as ds_service
 from app.services import access_service as access
 from app.services.access_service import ENTITY_DATASOURCE
 
 
 dataset_bp = Blueprint("datasets", __name__, url_prefix="/api/datasets")
-
-EDITOR_ROLES = ("admin", "expert")
 
 # Источники, где датасеты управляются системой (auto-create) и не могут
 # создаваться/удаляться вручную.
@@ -84,7 +82,7 @@ def list_datasets():
 # CREATE
 # ---------------------------------------------------------------------------
 @dataset_bp.route("", methods=["POST"])
-@role_required(*EDITOR_ROLES)
+@jwt_required()
 def create_dataset():
     """
     Body для SQL-источников:
@@ -185,7 +183,7 @@ def get_dataset(dataset_id):
 # DELETE
 # ---------------------------------------------------------------------------
 @dataset_bp.route("/<int:dataset_id>", methods=["DELETE"])
-@role_required(*EDITOR_ROLES)
+@jwt_required()
 def delete_dataset(dataset_id):
     dataset = db.session.get(Dataset, dataset_id)
     if dataset is None:
@@ -254,7 +252,7 @@ def preview_dataset(dataset_id):
 # REFRESH FIELDS
 # ---------------------------------------------------------------------------
 @dataset_bp.route("/<int:dataset_id>/refresh", methods=["POST"])
-@role_required(*EDITOR_ROLES)
+@jwt_required()
 def refresh_dataset_fields(dataset_id):
     dataset = db.session.get(Dataset, dataset_id)
     if dataset is None:
@@ -278,7 +276,7 @@ def refresh_dataset_fields(dataset_id):
     return jsonify(dataset.to_dict(include_fields=True))
 
 @dataset_bp.route("/<int:ds_id>", methods=["PUT"])
-@role_required(*EDITOR_ROLES)
+@jwt_required()
 def update_dataset(ds_id):
     """
     Body:

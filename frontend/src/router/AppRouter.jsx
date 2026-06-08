@@ -16,11 +16,12 @@ import ProfilePage from "../pages/ProfilePage";
 
 import ProtectedRoute from "../components/ProtectedRoute";
 import RoleRoute from "./RoleRoute";
+import EditAccessRoute from "./EditAccessRoute";
 import AppLayout from "../components/AppLayout";
 
 
 // Роли, которые могут создавать/редактировать аналитический контент
-const EDITOR_ROLES = ["admin", "expert"];
+
 
 
 export default function AppRouter() {
@@ -78,9 +79,9 @@ export default function AppRouter() {
             path="/widgets/new"
             element={
               <ProtectedRoute>
-                <RoleRoute roles={EDITOR_ROLES}>
+                <EditAccessRoute entityType="widget">
                   <WidgetBuilderPage />
-                </RoleRoute>
+                </EditAccessRoute>
               </ProtectedRoute>
             }
           />
@@ -88,9 +89,9 @@ export default function AppRouter() {
             path="/widgets/:widgetId/edit"
             element={
               <ProtectedRoute>
-                <RoleRoute roles={EDITOR_ROLES}>
+                <EditAccessRoute entityType="widget">
                   <WidgetBuilderPage />
-                </RoleRoute>
+                </EditAccessRoute>
               </ProtectedRoute>
             }
           />

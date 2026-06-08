@@ -15,14 +15,12 @@ from app.models import (
     DashboardKPI,
     DashboardText,
 )
-from app.auth.decorators import role_required, get_current_user_id
+from app.auth.decorators import get_current_user_id
 from app.services import access_service as access
 from app.services.access_service import ENTITY_DASHBOARD
 
 
 dashboard_bp = Blueprint("dashboards", __name__, url_prefix="/api/dashboards")
-
-EDITOR_ROLES = ("admin", "expert")
 
 
 # Допустимые токены оформления текста — синхронизированы с константами
@@ -71,7 +69,7 @@ def list_dashboards():
 
 
 @dashboard_bp.route("", methods=["POST"])
-@role_required(*EDITOR_ROLES)
+@jwt_required()
 def create_dashboard():
     data = request.json or {}
 
@@ -130,7 +128,7 @@ def get_dashboard(dashboard_id):
 
 
 @dashboard_bp.route("/<int:dashboard_id>", methods=["PUT"])
-@role_required(*EDITOR_ROLES)
+@jwt_required()
 def update_dashboard(dashboard_id):
     dashboard = db.session.get(Dashboard, dashboard_id)
     if dashboard is None:
@@ -171,7 +169,7 @@ def update_dashboard(dashboard_id):
 
 
 @dashboard_bp.route("/<int:dashboard_id>", methods=["DELETE"])
-@role_required(*EDITOR_ROLES)
+@jwt_required()
 def delete_dashboard(dashboard_id):
     dashboard = db.session.get(Dashboard, dashboard_id)
     if dashboard is None:
@@ -218,7 +216,7 @@ def pin_dashboard(dashboard_id):
 # Виджеты на дашборде
 # ---------------------------------------------------------------------------
 @dashboard_bp.route("/<int:dashboard_id>/widgets", methods=["POST"])
-@role_required(*EDITOR_ROLES)
+@jwt_required()
 def add_widget_to_dashboard(dashboard_id):
     dashboard = db.session.get(Dashboard, dashboard_id)
     if dashboard is None:
@@ -265,7 +263,6 @@ def add_widget_to_dashboard(dashboard_id):
     "/<int:dashboard_id>/widgets/<int:widget_id>",
     methods=["DELETE"]
 )
-@role_required(*EDITOR_ROLES)
 def remove_widget_from_dashboard(dashboard_id, widget_id):
     placement = (
         db.session.query(DashboardWidget)
@@ -290,7 +287,7 @@ def remove_widget_from_dashboard(dashboard_id, widget_id):
 # KPI на дашборде
 # ---------------------------------------------------------------------------
 @dashboard_bp.route("/<int:dashboard_id>/kpis", methods=["POST"])
-@role_required(*EDITOR_ROLES)
+@jwt_required()
 def add_kpi_to_dashboard(dashboard_id):
     dashboard = db.session.get(Dashboard, dashboard_id)
     if dashboard is None:
@@ -337,7 +334,6 @@ def add_kpi_to_dashboard(dashboard_id):
     "/<int:dashboard_id>/kpis/<int:kpi_id>",
     methods=["DELETE"]
 )
-@role_required(*EDITOR_ROLES)
 def remove_kpi_from_dashboard(dashboard_id, kpi_id):
     placement = (
         db.session.query(DashboardKPI)
@@ -362,7 +358,7 @@ def remove_kpi_from_dashboard(dashboard_id, kpi_id):
 # Текстовые элементы на дашборде
 # ---------------------------------------------------------------------------
 @dashboard_bp.route("/<int:dashboard_id>/texts", methods=["POST"])
-@role_required(*EDITOR_ROLES)
+@jwt_required()
 def add_text_to_dashboard(dashboard_id):
     """Создать текстовый элемент."""
     dashboard = db.session.get(Dashboard, dashboard_id)
@@ -396,7 +392,6 @@ def add_text_to_dashboard(dashboard_id):
     "/<int:dashboard_id>/texts/<int:text_id>",
     methods=["PUT"]
 )
-@role_required(*EDITOR_ROLES)
 def update_text(dashboard_id, text_id):
     """Обновить содержимое и/или оформление текстового элемента."""
     text = db.session.get(DashboardText, text_id)
@@ -427,7 +422,6 @@ def update_text(dashboard_id, text_id):
     "/<int:dashboard_id>/texts/<int:text_id>",
     methods=["DELETE"]
 )
-@role_required(*EDITOR_ROLES)
 def remove_text_from_dashboard(dashboard_id, text_id):
     text = db.session.get(DashboardText, text_id)
     if text is None or text.dashboard_id != dashboard_id:
@@ -448,7 +442,7 @@ def remove_text_from_dashboard(dashboard_id, text_id):
 # Пакетное обновление layout (виджеты + KPI + тексты вместе)
 # ---------------------------------------------------------------------------
 @dashboard_bp.route("/<int:dashboard_id>/layout", methods=["PUT"])
-@role_required(*EDITOR_ROLES)
+@jwt_required()
 def update_dashboard_layout(dashboard_id):
     """
     Body:

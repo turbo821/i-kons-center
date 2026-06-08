@@ -400,11 +400,14 @@ function EditRolesModal({ user, roles, onClose, onSaved }) {
   const memberGroupIds = new Set(memberships.map((m) => m.group_id));
   const candidateGroups = groups.filter((g) => !memberGroupIds.has(g.id));
 
-  // Сохранение глобальной роли admin. viewer оставляем всегда как базовую.
+  // Сохранение глобальной роли admin.
+  // В системе действует одна глобальная роль — admin; остальные права
+  // даются через включение в ролевые группы, поэтому viewer как
+  // глобальная роль больше не используется.
   const handleSaveAdmin = async () => {
     setBusy(true);
     try {
-      const newRoles = isAdmin ? ["viewer", "admin"] : ["viewer"];
+      const newRoles = isAdmin ? ["admin"] : [];
       await updateUserRoles(user.id, newRoles);
       toast.success("Глобальная роль обновлена");
       onSaved();

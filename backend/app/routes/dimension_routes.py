@@ -13,14 +13,12 @@ from flask_jwt_extended import jwt_required
 
 from app.database.db import db
 from app.models import Dimension, DatasetField
-from app.auth.decorators import role_required, get_current_user_id
+from app.auth.decorators import get_current_user_id
 from app.services import access_service as access
 from app.services.access_service import ENTITY_DATASOURCE
 
 
 dimension_bp = Blueprint("dimensions", __name__, url_prefix="/api/dimensions")
-
-EDITOR_ROLES = ("admin", "expert")
 
 
 @dimension_bp.route("", methods=["GET"])
@@ -45,7 +43,7 @@ def list_dimensions():
 
 
 @dimension_bp.route("", methods=["POST"])
-@role_required(*EDITOR_ROLES)
+@jwt_required()
 def create_dimension():
     """
     Body:
@@ -88,7 +86,7 @@ def create_dimension():
 
 
 @dimension_bp.route("/<int:dim_id>", methods=["PUT"])
-@role_required(*EDITOR_ROLES)
+@jwt_required()
 def update_dimension(dim_id):
     """
     Обновить измерение. Допустимы изменения:
@@ -125,7 +123,7 @@ def update_dimension(dim_id):
 
 
 @dimension_bp.route("/<int:dim_id>", methods=["DELETE"])
-@role_required(*EDITOR_ROLES)
+@jwt_required()
 def delete_dimension(dim_id):
     dim = db.session.get(Dimension, dim_id)
     if dim is None:

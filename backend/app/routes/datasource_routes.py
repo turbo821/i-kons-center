@@ -24,7 +24,7 @@ from flask_jwt_extended import jwt_required, get_jwt_identity
 
 from app.database.db import db
 from app.models import DataSource, DataSourceCategory, Dataset, DatasetField
-from app.auth.decorators import role_required, get_current_user_id
+from app.auth.decorators import get_current_user_id
 from app.services import datasource_service as ds_service
 from app.services import access_service as access
 from app.services.access_service import ENTITY_DATASOURCE
@@ -35,8 +35,6 @@ datasource_bp = Blueprint(
     __name__,
     url_prefix="/api/datasources"
 )
-
-EDITOR_ROLES = ("admin", "expert")
 
 
 def _add_dataset_for_file(
@@ -121,7 +119,7 @@ def list_datasources():
 
 
 @datasource_bp.route("", methods=["POST"])
-@role_required(*EDITOR_ROLES)
+@jwt_required()
 def create_sql_datasource():
     data = request.json or {}
 
@@ -179,7 +177,7 @@ def create_sql_datasource():
 
 
 @datasource_bp.route("/upload", methods=["POST"])
-@role_required(*EDITOR_ROLES)
+@jwt_required()
 def upload_file_datasource():
     """
     multipart/form-data: file, name?, category_id?
@@ -254,7 +252,7 @@ def upload_file_datasource():
 
 
 @datasource_bp.route("/link", methods=["POST"])
-@role_required(*EDITOR_ROLES)
+@jwt_required()
 def create_link_datasource():
     """
     Создаёт источник csv_link + автоматически датасеты по содержимому
@@ -334,7 +332,7 @@ def get_datasource(ds_id):
 
 
 @datasource_bp.route("/<int:ds_id>", methods=["DELETE"])
-@role_required(*EDITOR_ROLES)
+@jwt_required()
 def delete_datasource(ds_id):
     ds = DataSource.query.get_or_404(ds_id)
     denied = _require_ds_edit(ds)
@@ -361,7 +359,7 @@ def delete_datasource(ds_id):
 
 
 @datasource_bp.route("/<int:ds_id>", methods=["PUT"])
-@role_required(*EDITOR_ROLES)
+@jwt_required()
 def update_datasource(ds_id):
     ds = DataSource.query.get_or_404(ds_id)
     denied = _require_ds_edit(ds)
@@ -394,7 +392,7 @@ def update_datasource(ds_id):
 
 
 @datasource_bp.route("/<int:ds_id>/replace-file", methods=["POST"])
-@role_required(*EDITOR_ROLES)
+@jwt_required()
 def replace_file(ds_id):
     """
     Заменяет файл в источнике типа csv.
@@ -458,7 +456,7 @@ def replace_file(ds_id):
 
 
 @datasource_bp.route("/<int:ds_id>/link-path", methods=["PUT"])
-@role_required(*EDITOR_ROLES)
+@jwt_required()
 def update_link_path(ds_id):
     ds = DataSource.query.get_or_404(ds_id)
 
@@ -541,7 +539,7 @@ def _check_file_compat(ds: DataSource, new_path: str) -> list[str]:
 
 
 @datasource_bp.route("/<int:ds_id>/connection", methods=["PUT"])
-@role_required(*EDITOR_ROLES)
+@jwt_required()
 def update_connection(ds_id):
     ds = DataSource.query.get_or_404(ds_id)
 

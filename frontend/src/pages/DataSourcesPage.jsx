@@ -375,6 +375,7 @@ export default function DataSourcesPage() {
 
 function UploadFileModal({ open, onClose, categories, onCreated }) {
   const toast = useToast();
+  const { editableCategoryIds } = useAccess();
   // Режим: 'upload' — загрузить файл (старый поведение); 'link' — путь к файлу
   const [mode, setMode] = useState("upload");
   const [file, setFile] = useState(null);
@@ -382,6 +383,11 @@ function UploadFileModal({ open, onClose, categories, onCreated }) {
   const [name, setName] = useState("");
   const [categoryId, setCategoryId] = useState("");
   const [busy, setBusy] = useState(false);
+
+  // Показываем только категории, в которых можно редактировать
+  const editableIds = editableCategoryIds("datasource");
+  const allowNoCategory = editableIds.has(null);
+  const editableCategories = categories.filter((c) => editableIds.has(c.id));
 
   const reset = () => {
     setMode("upload");
@@ -513,8 +519,10 @@ function UploadFileModal({ open, onClose, categories, onCreated }) {
             onChange={(e) => setCategoryId(e.target.value)}
             className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
           >
-            <option value="">— без категории —</option>
-            {categories.map((c) => (
+            <option value="">
+              {allowNoCategory ? "— без категории —" : "— выберите категорию —"}
+            </option>
+            {editableCategories.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name}
               </option>
@@ -550,6 +558,7 @@ function UploadFileModal({ open, onClose, categories, onCreated }) {
 
 function CreateSqlModal({ open, onClose, categories, onCreated }) {
   const toast = useToast();
+  const { editableCategoryIds } = useAccess();
   const [form, setForm] = useState({
     name: "",
     type: "postgres",
@@ -561,6 +570,10 @@ function CreateSqlModal({ open, onClose, categories, onCreated }) {
     category_id: "",
   });
   const [busy, setBusy] = useState(false);
+
+  const editableIds = editableCategoryIds("datasource");
+  const allowNoCategory = editableIds.has(null);
+  const editableCategories = categories.filter((c) => editableIds.has(c.id));
 
   const change = (e) =>
     setForm((f) => ({
@@ -636,8 +649,10 @@ function CreateSqlModal({ open, onClose, categories, onCreated }) {
             onChange={change}
             className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
           >
-            <option value="">— без категории —</option>
-            {categories.map((c) => (
+            <option value="">
+              {allowNoCategory ? "— без категории —" : "— выберите категорию —"}
+            </option>
+            {editableCategories.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name}
               </option>

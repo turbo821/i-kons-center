@@ -30,13 +30,11 @@ def register():
         bcrypt.gensalt()
     ).decode("utf-8")
 
-    viewer_role = Role.query.filter_by(name="viewer").first()
-
     user = User(
         username=username,
         email=email,
         password_hash=password_hash,
-        roles=[viewer_role]
+        roles=[]
     )
 
     db.session.add(user)

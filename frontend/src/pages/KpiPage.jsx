@@ -293,7 +293,12 @@ function FilterChip({ active, onClick, children }) {
 function KpiEditorModal({ open, onClose, editingKpi, categories, onSaved }) {
   const toast = useToast();
   const confirm = useConfirm();
+  const { editableCategoryIds } = useAccess();
   const isEdit = !!editingKpi;
+
+  const editableIds = editableCategoryIds("kpi");
+  const allowNoCategory = editableIds.has(null);
+  const editableCategories = categories.filter((c) => editableIds.has(c.id));
 
   const [form, setForm] = useState({
     name: "",
@@ -580,8 +585,10 @@ function KpiEditorModal({ open, onClose, editingKpi, categories, onSaved }) {
         <div>
           <Label>Категория</Label>
           <Select value={form.category_id} onChange={change("category_id")}>
-            <option value="">— без категории —</option>
-            {categories.map((c) => (
+            <option value="">
+              {allowNoCategory ? "— без категории —" : "— выберите категорию —"}
+            </option>
+            {editableCategories.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name}
               </option>
