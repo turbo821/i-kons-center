@@ -392,6 +392,7 @@ def add_text_to_dashboard(dashboard_id):
     "/<int:dashboard_id>/texts/<int:text_id>",
     methods=["PUT"]
 )
+@jwt_required()
 def update_text(dashboard_id, text_id):
     """Обновить содержимое и/или оформление текстового элемента."""
     text = db.session.get(DashboardText, text_id)
